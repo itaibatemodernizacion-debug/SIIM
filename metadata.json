@@ -1,0 +1,6 @@
+{
+  "name": "SIMM - Municipalidad de Itá Ibaté",
+  "description": "Sistema Integral de Monitoreo y Gestión Municipal de la Municipalidad de Itá Ibaté, Corrientes. Seguimiento de atenciones, trámites, deportes y estadísticas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
