@@ -13,6 +13,8 @@ import { ReportsCenter } from './components/reports/ReportsCenter';
 import { AdminManagement } from './components/admin/AdminManagement';
 import { FundsModule } from './components/funds/FundsModule';
 import { UrbanControlModule } from './components/urban-control/UrbanControlModule';
+import { HumanResourcesModule } from './components/rrhh/HumanResourcesModule';
+import { CultureEducationModule } from './components/culture/CultureEducationModule';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { Citizen } from './types';
 import { Building2, Shield, Heart } from 'lucide-react';
@@ -79,6 +81,14 @@ const MainAppContent: React.FC = () => {
 
             {activeTab === 'CONTROL_URBANO' && (
               <UrbanControlModule />
+            )}
+
+            {activeTab === 'RRHH' && (
+              <HumanResourcesModule />
+            )}
+
+            {activeTab === 'CULTURE' && (
+              <CultureEducationModule />
             )}
 
             {activeTab === 'FUNDS' && (

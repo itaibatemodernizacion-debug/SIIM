@@ -3,109 +3,149 @@ import { useAuth } from '../../context/AuthContext';
 import { 
   Building2, 
   ShieldCheck, 
-  Sparkles, 
-  UserCheck, 
   Lock, 
-  Mail, 
   ArrowRight,
-  ShieldAlert
+  ShieldAlert,
+  Eye,
+  EyeOff,
+  UserCheck,
+  CheckCircle2,
+  KeyRound
 } from 'lucide-react';
 
 export const LoginScreen: React.FC = () => {
-  const { users, loginAsUser, loginWithGoogle, loginWithCredentials } = useAuth();
+  const { users, loginWithSystemPassword, loginWithGoogle } = useAuth();
 
-  const [email, setEmail] = useState('intendencia@itaibate.gob.ar');
-  const [password, setPassword] = useState('******');
+  const [password, setPassword] = useState('Gestion2629');
+  const [selectedUserId, setSelectedUserId] = useState<string>(users[0]?.id || '');
+  const [showPassword, setShowPassword] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg(null);
     setIsSubmitting(true);
-    // Find matching user or fallback
-    const matched = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (matched) {
-      loginAsUser(matched.id);
-    } else {
-      loginWithCredentials(email, 'RESPONSABLE_AREA');
+
+    const result = loginWithSystemPassword(password, selectedUserId);
+    if (!result.success) {
+      setErrorMsg(result.error || 'Contraseña incorrecta.');
     }
     setIsSubmitting(false);
   };
 
+  const selectedUser = users.find(u => u.id === selectedUserId) || users[0];
+
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
       {/* Background glow effects */}
       <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-sky-600/10 rounded-full blur-3xl pointer-events-none"></div>
       <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
 
       <div className="max-w-md w-full space-y-6 relative z-10">
-        {/* Municipal Emblem & Brand Header */}
-        <div className="text-center space-y-2">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-sky-600 via-blue-600 to-indigo-700 mx-auto flex items-center justify-center shadow-xl shadow-sky-900/30 border border-sky-400/30">
-            <Building2 className="w-9 h-9 text-white" />
+        {/* Municipal Official Crest & Brand Header */}
+        <div className="text-center space-y-2.5">
+          <div className="relative inline-block">
+            <img 
+              src="/logo.png" 
+              alt="Escudo Oficial de la Municipalidad de Itá Ibaté" 
+              className="w-28 h-28 mx-auto object-contain drop-shadow-2xl transition-transform hover:scale-105 duration-300"
+            />
           </div>
+
           <h1 className="text-2xl font-black text-white tracking-tight uppercase">
             MUNICIPALIDAD DE ITÁ IBATÉ
           </h1>
           <p className="text-xs font-semibold text-sky-400 uppercase tracking-widest">
-            CORRIENTES • ARGENTINA
+            PROVINCIA DE CORRIENTES • ARGENTINA
           </p>
-          <p className="text-xs text-slate-400">
+          <div className="inline-block bg-slate-900/90 border border-slate-800 px-3 py-1 rounded-full text-[11px] text-slate-300 font-medium">
             SIMM — Sistema Integral de Monitoreo y Gestión Municipal
-          </p>
+          </div>
         </div>
 
         {/* Login Box */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5">
+        <div className="bg-slate-900/95 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5 backdrop-blur-sm">
           <div className="pb-3 border-b border-slate-800 text-center">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/10 text-sky-400 border border-sky-500/30 mb-1">
+              <KeyRound className="w-3 h-3" />
+              ACCESO RESTRINGIDO CON CLAVE DE SEGURIDAD
+            </div>
             <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-              Acceso Institucional
+              Autenticación Institucional
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Ingrese con sus credenciales de empleado o funcionario
+              Ingrese la contraseña de gestión municipal para acceder
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+          {errorMsg && (
+            <div className="p-3 bg-rose-950/70 border border-rose-500/40 rounded-xl text-xs text-rose-300 flex items-start gap-2">
+              <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+            {/* User / Area selection */}
             <div>
-              <label className="block text-slate-300 font-medium mb-1">
-                Correo Institucional
+              <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+                <span>Ingresar como Funcionario / Área:</span>
+                <span className="text-[10px] text-sky-400 font-normal">Personal Autorizado</span>
               </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="usuario@itaibate.gob.ar"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-white focus:outline-none focus:border-sky-500 font-medium"
-                />
-              </div>
+              <select
+                value={selectedUserId}
+                onChange={(e) => setSelectedUserId(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-sky-500 font-medium"
+              >
+                {users.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.name} — {u.position} ({u.role === 'ADMIN_GENERAL' ? 'Administrador' : 'Área'})
+                  </option>
+                ))}
+              </select>
             </div>
 
+            {/* Password input */}
             <div>
-              <label className="block text-slate-300 font-medium mb-1">
-                Contraseña
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-slate-300 font-medium">
+                  Contraseña de Acceso al Sistema
+                </label>
+                <span className="text-[10px] text-emerald-400 font-medium bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30">
+                  Inicial: Gestion2629
+                </span>
+              </div>
               <div className="relative">
-                <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+                <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-white focus:outline-none focus:border-sky-500 font-medium"
+                  placeholder="Ingrese su contraseña"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-9 pr-10 py-2.5 text-white focus:outline-none focus:border-sky-500 font-medium tracking-wide text-sm"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-2.5 text-slate-400 hover:text-white cursor-pointer"
+                  title={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                La contraseña puede ser modificada posteriormente desde el módulo de Administración o desde la barra superior.
+              </p>
             </div>
 
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold shadow-lg shadow-sky-900/30 transition cursor-pointer flex items-center justify-center gap-1.5"
+              className="w-full py-3 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white rounded-xl font-bold shadow-xl shadow-sky-900/40 transition cursor-pointer flex items-center justify-center gap-2 text-sm"
             >
-              <span>Ingresar al Sistema</span>
+              <span>Desbloquear y Acceder</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
@@ -121,7 +161,7 @@ export const LoginScreen: React.FC = () => {
 
             <button
               onClick={loginWithGoogle}
-              className="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-semibold text-slate-200 transition cursor-pointer flex items-center justify-center gap-2"
+              className="w-full py-2.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-xl text-xs font-semibold text-slate-200 transition cursor-pointer flex items-center justify-center gap-2"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -129,35 +169,15 @@ export const LoginScreen: React.FC = () => {
                 <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
                 <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
               </svg>
-              <span>Iniciar Sesión con Google</span>
+              <span>Acceso Seguro con Google Workspace</span>
             </button>
-          </div>
-
-          {/* Quick Access Roles Selector (Demo) */}
-          <div className="pt-3 border-t border-slate-800 space-y-2">
-            <span className="text-[10px] uppercase font-bold text-slate-500 block text-center">
-              Acceso Rápido para Demostración y Evaluación
-            </span>
-
-            <div className="grid grid-cols-2 gap-1.5">
-              {users.slice(0, 4).map(u => (
-                <button
-                  key={u.id}
-                  onClick={() => loginAsUser(u.id)}
-                  className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-left transition cursor-pointer"
-                >
-                  <div className="font-bold text-slate-200 text-[11px] truncate">{u.name}</div>
-                  <div className="text-[9px] text-sky-400 truncate">{u.position}</div>
-                </button>
-              ))}
-            </div>
           </div>
         </div>
 
         {/* Footer info */}
         <div className="text-center text-[11px] text-slate-500 space-y-1">
           <p>Cumplimiento de la Ley 25.326 de Protección de Datos Personales.</p>
-          <p>Municipalidad de Itá Ibaté • Gestión Pública y Modernización</p>
+          <p>Municipalidad de Itá Ibaté • Corrientes, República Argentina</p>
         </div>
       </div>
     </div>

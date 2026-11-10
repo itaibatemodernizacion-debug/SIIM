@@ -18,7 +18,10 @@ import {
   DriversLicenseRecord,
   TrafficFineRecord,
   CommercialLicenseRecord,
-  TrafficCheckpointRecord
+  TrafficCheckpointRecord,
+  MunicipalEmployee,
+  CulturalStudent,
+  CulturalCourseType
 } from '../types';
 import { 
   INITIAL_DEPARTMENTS, 
@@ -34,7 +37,9 @@ import {
   INITIAL_DRIVERS_LICENSES,
   INITIAL_TRAFFIC_FINES,
   INITIAL_COMMERCIAL_LICENSES,
-  INITIAL_TRAFFIC_CHECKPOINTS
+  INITIAL_TRAFFIC_CHECKPOINTS,
+  INITIAL_MUNICIPAL_EMPLOYEES,
+  INITIAL_CULTURAL_STUDENTS
 } from '../data/initialData';
 import { useAuth } from './AuthContext';
 import { ParsedMunicipalRow } from '../lib/excelUtils';
@@ -158,6 +163,35 @@ interface MunicipalDataContextType {
     totalBreathalyzerPositive: number;
   };
 
+  // MÓDULO DE RECURSOS HUMANOS (Art. 21 - Personal Municipal)
+  employees: MunicipalEmployee[];
+  addEmployee: (employee: Omit<MunicipalEmployee, 'id' | 'createdAt' | 'fileNumber'> & { fileNumber?: string }) => MunicipalEmployee;
+  updateEmployee: (employee: MunicipalEmployee) => void;
+  deleteEmployee: (id: string) => void;
+  employeeKPIs: {
+    totalEmployees: number;
+    plantaPermanenteCount: number;
+    contratadoCount: number;
+    gabineteCount: number;
+    jornalizadoCount: number;
+    activeCount: number;
+    totalPayrollEstimated: number;
+  };
+
+  // MÓDULO DE CULTURA Y EDUCACIÓN (Cursos Oficiales: Urbano, Ballet, Música, Folklore)
+  culturalStudents: CulturalStudent[];
+  addCulturalStudent: (student: Omit<CulturalStudent, 'id' | 'createdAt' | 'enrollmentNumber'> & { enrollmentNumber?: string }) => CulturalStudent;
+  updateCulturalStudent: (student: CulturalStudent) => void;
+  deleteCulturalStudent: (id: string) => void;
+  culturalKPIs: {
+    totalStudents: number;
+    minorStudentsCount: number;
+    adultStudentsCount: number;
+    urbanoCount: number;
+    balletCount: number;
+    musicaCount: number;
+    folkloreCount: number;
+  };
 
   // CRUD Citizens
   addCitizen: (citizen: Omit<Citizen, 'id' | 'registrationDate'>) => Citizen;
@@ -224,6 +258,7 @@ interface MunicipalDataContextType {
   filteredTickets: Ticket[];
   filteredCitizens: Citizen[];
   resetAllData: () => void;
+  clearDemoData: () => void;
 }
 
 const STORAGE_KEYS = {
@@ -241,7 +276,9 @@ const STORAGE_KEYS = {
   DRIVERS_LICENSES: 'ita_ibate_simm_drivers_licenses',
   TRAFFIC_FINES: 'ita_ibate_simm_traffic_fines',
   COMMERCIAL_LICENSES: 'ita_ibate_simm_commercial_licenses',
-  TRAFFIC_CHECKPOINTS: 'ita_ibate_simm_traffic_checkpoints'
+  TRAFFIC_CHECKPOINTS: 'ita_ibate_simm_traffic_checkpoints',
+  EMPLOYEES: 'ita_ibate_simm_employees',
+  CULTURAL_STUDENTS: 'ita_ibate_simm_cultural_students'
 };
 
 const MunicipalDataContext = createContext<MunicipalDataContextType | undefined>(undefined);
@@ -338,6 +375,16 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     return saved ? JSON.parse(saved) : DEFAULT_EXPENSE_CATEGORIES;
   });
 
+  const [employees, setEmployees] = useState<MunicipalEmployee[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.EMPLOYEES);
+    return saved ? JSON.parse(saved) : INITIAL_MUNICIPAL_EMPLOYEES;
+  });
+
+  const [culturalStudents, setCulturalStudents] = useState<CulturalStudent[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.CULTURAL_STUDENTS);
+    return saved ? JSON.parse(saved) : INITIAL_CULTURAL_STUDENTS;
+  });
+
   // Global filters
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>({
     start: '',
@@ -359,6 +406,12 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses)); }, [expenses]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.EXP_CATEGORIES, JSON.stringify(expenseCategories)); }, [expenseCategories]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.NECROLOGICAL, JSON.stringify(necrologicalRecords)); }, [necrologicalRecords]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.DRIVERS_LICENSES, JSON.stringify(driversLicenses)); }, [driversLicenses]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.TRAFFIC_FINES, JSON.stringify(trafficFines)); }, [trafficFines]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.COMMERCIAL_LICENSES, JSON.stringify(commercialLicenses)); }, [commercialLicenses]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.TRAFFIC_CHECKPOINTS, JSON.stringify(trafficCheckpoints)); }, [trafficCheckpoints]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.EMPLOYEES, JSON.stringify(employees)); }, [employees]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.CULTURAL_STUDENTS, JSON.stringify(culturalStudents)); }, [culturalStudents]);
 
   // Audit helper
   const logAudit = (action: string, entity: string, details: string, entityId?: string) => {
@@ -619,6 +672,111 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [driversLicenses, trafficFines, commercialLicenses, trafficCheckpoints]);
 
+  // ==========================================
+  // OPERACIONES DE RECURSOS HUMANOS (RRHH)
+  // ==========================================
+  const addEmployee = (data: Omit<MunicipalEmployee, 'id' | 'createdAt' | 'fileNumber'> & { fileNumber?: string }): MunicipalEmployee => {
+    const id = `emp-${Date.now()}`;
+    const nextNum = employees.length + 1;
+    const fileNumber = data.fileNumber && data.fileNumber.trim() !== '' 
+      ? data.fileNumber.trim() 
+      : `LEG-${String(nextNum).padStart(5, '0')}`;
+    const newEmployee: MunicipalEmployee = {
+      ...data,
+      id,
+      fileNumber,
+      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16)
+    };
+    setEmployees(prev => [newEmployee, ...prev]);
+    logAudit('ALTA_PERSONAL', 'RECURSOS_HUMANOS', `Ingreso de personal: ${newEmployee.fullName} (Legajo ${fileNumber}, Condición ${newEmployee.employmentCondition})`, id);
+    return newEmployee;
+  };
+
+  const updateEmployee = (employee: MunicipalEmployee) => {
+    setEmployees(prev => prev.map(e => e.id === employee.id ? employee : e));
+    logAudit('ACTUALIZACION_PERSONAL', 'RECURSOS_HUMANOS', `Modificación legajo personal: ${employee.fullName} (${employee.fileNumber})`, employee.id);
+  };
+
+  const deleteEmployee = (id: string) => {
+    const target = employees.find(e => e.id === id);
+    setEmployees(prev => prev.filter(e => e.id !== id));
+    logAudit('BAJA_PERSONAL', 'RECURSOS_HUMANOS', `Baja de legajo: ${target?.fullName || id} (${target?.fileNumber || ''})`, id);
+  };
+
+  const employeeKPIs = useMemo(() => {
+    const totalEmployees = employees.length;
+    const plantaPermanenteCount = employees.filter(e => e.employmentCondition === 'PLANTA_PERMANENTE').length;
+    const contratadoCount = employees.filter(e => e.employmentCondition === 'CONTRATADO').length;
+    const gabineteCount = employees.filter(e => e.employmentCondition === 'PERSONAL_DE_GABINETE').length;
+    const jornalizadoCount = employees.filter(e => e.employmentCondition === 'JORNALIZADO').length;
+    const activeCount = employees.filter(e => e.status === 'ACTIVO').length;
+    const totalPayrollEstimated = employees.reduce((sum, e) => sum + (e.basicSalary || 0), 0);
+
+    return {
+      totalEmployees,
+      plantaPermanenteCount,
+      contratadoCount,
+      gabineteCount,
+      jornalizadoCount,
+      activeCount,
+      totalPayrollEstimated
+    };
+  }, [employees]);
+
+  // ==========================================
+  // OPERACIONES DE CULTURA Y EDUCACIÓN
+  // ==========================================
+  const addCulturalStudent = (data: Omit<CulturalStudent, 'id' | 'createdAt' | 'enrollmentNumber'> & { enrollmentNumber?: string }): CulturalStudent => {
+    const id = `cult-${Date.now()}`;
+    const nextNum = culturalStudents.length + 1;
+    const enrollmentNumber = data.enrollmentNumber && data.enrollmentNumber.trim() !== ''
+      ? data.enrollmentNumber.trim()
+      : `CULT-2026-${String(nextNum).padStart(3, '0')}`;
+    const isMinor = data.isMinor ?? (data.age !== undefined ? data.age < 18 : false);
+    const newStudent: CulturalStudent = {
+      ...data,
+      id,
+      enrollmentNumber,
+      isMinor,
+      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16)
+    };
+    setCulturalStudents(prev => [newStudent, ...prev]);
+    logAudit('INSCRIPCION_CULTURA', 'CULTURA_EDUCACION', `Inscripción a taller: ${newStudent.fullName} en curso ${newStudent.course} (${enrollmentNumber})${isMinor ? ' [Menor de Edad con Tutor]' : ''}`, id);
+    return newStudent;
+  };
+
+  const updateCulturalStudent = (student: CulturalStudent) => {
+    const isMinor = student.isMinor ?? (student.age !== undefined ? student.age < 18 : false);
+    const updated = { ...student, isMinor };
+    setCulturalStudents(prev => prev.map(s => s.id === student.id ? updated : s));
+    logAudit('ACTUALIZACION_ALUMNO', 'CULTURA_EDUCACION', `Actualización de alumno: ${student.fullName} en ${student.course}`, student.id);
+  };
+
+  const deleteCulturalStudent = (id: string) => {
+    const target = culturalStudents.find(s => s.id === id);
+    setCulturalStudents(prev => prev.filter(s => s.id !== id));
+    logAudit('BAJA_ALUMNO', 'CULTURA_EDUCACION', `Baja de inscripción cultural: ${target?.fullName || id}`, id);
+  };
+
+  const culturalKPIs = useMemo(() => {
+    const totalStudents = culturalStudents.length;
+    const minorStudentsCount = culturalStudents.filter(s => s.isMinor || (s.age && s.age < 18)).length;
+    const adultStudentsCount = totalStudents - minorStudentsCount;
+    const urbanoCount = culturalStudents.filter(s => s.course === 'URBANO').length;
+    const balletCount = culturalStudents.filter(s => s.course === 'BALLET').length;
+    const musicaCount = culturalStudents.filter(s => s.course === 'MÚSICA').length;
+    const folkloreCount = culturalStudents.filter(s => s.course === 'FOLKLORE').length;
+
+    return {
+      totalStudents,
+      minorStudentsCount,
+      adultStudentsCount,
+      urbanoCount,
+      balletCount,
+      musicaCount,
+      folkloreCount
+    };
+  }, [culturalStudents]);
 
   // Citizen Operations
   const findCitizenByDni = (dni: string) => {
@@ -1161,6 +1319,8 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     setFundAllocations(INITIAL_FUND_ALLOCATIONS);
     setExpenses(INITIAL_EXPENSES);
     setExpenseCategories(DEFAULT_EXPENSE_CATEGORIES);
+    setEmployees(INITIAL_MUNICIPAL_EMPLOYEES);
+    setCulturalStudents(INITIAL_CULTURAL_STUDENTS);
     setAuditLogs([]);
     localStorage.removeItem(STORAGE_KEYS.DEPTS);
     localStorage.removeItem(STORAGE_KEYS.NECROLOGICAL);
@@ -1168,6 +1328,8 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     localStorage.removeItem(STORAGE_KEYS.TRAFFIC_FINES);
     localStorage.removeItem(STORAGE_KEYS.COMMERCIAL_LICENSES);
     localStorage.removeItem(STORAGE_KEYS.TRAFFIC_CHECKPOINTS);
+    localStorage.removeItem(STORAGE_KEYS.EMPLOYEES);
+    localStorage.removeItem(STORAGE_KEYS.CULTURAL_STUDENTS);
     localStorage.removeItem(STORAGE_KEYS.CITIZENS);
     localStorage.removeItem(STORAGE_KEYS.TICKETS);
     localStorage.removeItem(STORAGE_KEYS.SPORTS_EVENTS);
@@ -1177,6 +1339,41 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     localStorage.removeItem(STORAGE_KEYS.EXPENSES);
     localStorage.removeItem(STORAGE_KEYS.EXP_CATEGORIES);
     localStorage.removeItem(STORAGE_KEYS.AUDIT_LOGS);
+  };
+
+  const clearDemoData = () => {
+    // Purges all operational demo data leaving a clean, production-ready system
+    setCitizens([]);
+    setTickets([]);
+    setSportsEvents([]);
+    setSportsParticipants([]);
+    setFundAllocations([]);
+    setExpenses([]);
+    setNecrologicalRecords([]);
+    setDriversLicenses([]);
+    setTrafficFines([]);
+    setCommercialLicenses([]);
+    setTrafficCheckpoints([]);
+    setEmployees([]);
+    setCulturalStudents([]);
+    setSyncLogs([]);
+    
+    localStorage.setItem(STORAGE_KEYS.CITIZENS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.SPORTS_EVENTS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.SPORTS_PARTICIPANTS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.FUNDS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.NECROLOGICAL, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.DRIVERS_LICENSES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.TRAFFIC_FINES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.COMMERCIAL_LICENSES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.TRAFFIC_CHECKPOINTS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.EMPLOYEES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.CULTURAL_STUDENTS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.SYNC_LOGS, JSON.stringify([]));
+
+    logAudit('LIMPIEZA_SISTEMA', 'CONFIGURACION', 'Se purgaron todos los datos de prueba y demostración. El sistema inicia en producción.');
   };
 
   // Filtered tickets
@@ -1493,6 +1690,16 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         updateTrafficCheckpoint,
         deleteTrafficCheckpoint,
         urbanControlKPIs,
+        employees,
+        addEmployee,
+        updateEmployee,
+        deleteEmployee,
+        employeeKPIs,
+        culturalStudents,
+        addCulturalStudent,
+        updateCulturalStudent,
+        deleteCulturalStudent,
+        culturalKPIs,
         addCitizen,
         updateCitizen,
         findCitizenByDni,
@@ -1525,7 +1732,8 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         departmentKPIs,
         filteredTickets,
         filteredCitizens,
-        resetAllData
+        resetAllData,
+        clearDemoData
       }}
     >
       {children}

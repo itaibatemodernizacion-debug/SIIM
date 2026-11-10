@@ -121,6 +121,41 @@ export interface SportParticipant {
   teamOrClub: string;
   participationDate: string;
   location: string;
+  // Menores de edad y Tutor Responsable
+  isMinor?: boolean;
+  age?: number;
+  tutorName?: string;
+  tutorDni?: string;
+  tutorPhone?: string;
+  tutorRelationship?: string; // ej. Madre, Padre, Tutor Legal, Abuelo/a
+}
+
+// Cursos Oficiales de la Secretaría de Cultura y Educación
+export type CulturalCourseType = 'URBANO' | 'BALLET' | 'MÚSICA' | 'FOLKLORE';
+
+export interface CulturalStudent {
+  id: string;
+  enrollmentNumber: string; // ej. CULT-2026-001
+  fullName: string;
+  dni: string;
+  birthDate?: string;
+  age?: number;
+  isMinor: boolean;
+  phone: string;
+  address: string;
+  neighborhood: string;
+  course: CulturalCourseType;
+  shift: 'MANANA' | 'TARDE' | 'NOCHE';
+  teacherName?: string;
+  enrollmentDate: string;
+  status: 'ACTIVO' | 'REGULAR' | 'BAJA';
+  // Tutor responsable obligatorio para menores
+  tutorName?: string;
+  tutorDni?: string;
+  tutorPhone?: string;
+  tutorRelationship?: string;
+  notes?: string;
+  createdAt: string;
 }
 
 export interface SyncLog {

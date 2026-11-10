@@ -1,4 +1,3 @@
-import React from 'react';
 import { 
   LayoutDashboard, 
   Users, 
@@ -10,7 +9,9 @@ import {
   Settings,
   Shield,
   Layers,
-  DollarSign
+  DollarSign,
+  IdCard,
+  GraduationCap
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useMunicipalData } from '../context/MunicipalDataContext';
@@ -20,6 +21,8 @@ export type ActiveTab =
   | 'CITIZENS' 
   | 'TICKETS' 
   | 'CONTROL_URBANO'
+  | 'RRHH'
+  | 'CULTURE'
   | 'FUNDS'
   | 'SPORTS' 
   | 'AREAS' 
@@ -34,7 +37,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
   const { currentUser, isAdmin } = useAuth();
-  const { kpis, departments, financialKPIs, urbanControlKPIs } = useMunicipalData();
+  const { kpis, departments, financialKPIs, urbanControlKPIs, employeeKPIs, culturalKPIs } = useMunicipalData();
 
   const userDept = departments.find(d => d.id === currentUser?.departmentId);
 
@@ -66,6 +69,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
       icon: Shield,
       badge: `${urbanControlKPIs.totalLicenses} carnets`,
       badgeColor: 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+    },
+    {
+      id: 'RRHH',
+      label: 'Recursos Humanos (RRHH)',
+      icon: IdCard,
+      badge: `${employeeKPIs.totalEmployees} pers.`,
+      badgeColor: 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+    },
+    {
+      id: 'CULTURE',
+      label: 'Cultura y Cursos',
+      icon: GraduationCap,
+      badge: `${culturalKPIs.totalStudents} al.`,
+      badgeColor: 'bg-pink-500/20 text-pink-300 border border-pink-500/30'
     },
     {
       id: 'FUNDS',
@@ -111,7 +128,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
     <aside className="w-full md:w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0">
       {/* Navigation Menu */}
       <div className="p-3 space-y-1">
-        <div className="px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+        {/* Crest mini card */}
+        <div className="p-2.5 mb-2 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center gap-2.5">
+          <img 
+            src="/logo.png" 
+            alt="Escudo Itá Ibaté" 
+            className="w-8 h-8 object-contain shrink-0" 
+          />
+          <div className="overflow-hidden">
+            <div className="text-[11px] font-black text-white uppercase tracking-tight truncate">
+              ITÁ IBATÉ
+            </div>
+            <div className="text-[9px] font-semibold text-sky-400 uppercase tracking-wider truncate">
+              Gestión Municipal
+            </div>
+          </div>
+        </div>
+
+        <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
           Navegación del Sistema
         </div>
 

@@ -13,7 +13,10 @@ import {
   FileSpreadsheet, 
   ChevronDown,
   RefreshCw,
-  Sparkles
+  Sparkles,
+  KeyRound,
+  Database,
+  X
 } from 'lucide-react';
 
 export const Header: React.FC<{ 
@@ -33,12 +36,19 @@ export const Header: React.FC<{
     loginWithGoogle, 
     googleToken, 
     maskSensitiveData, 
-    toggleMaskSensitiveData 
+    toggleMaskSensitiveData,
+    changeSystemPassword 
   } = useAuth();
   
   const { kpis, departmentKPIs, financialKPIs, resetAllData } = useMunicipalData();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showRoleSwitcher, setShowRoleSwitcher] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [currentPassInput, setCurrentPassInput] = useState('');
+  const [newPassInput, setNewPassInput] = useState('');
+  const [confirmPassInput, setConfirmPassInput] = useState('');
+  const [passError, setPassError] = useState<string | null>(null);
+  const [passSuccess, setPassSuccess] = useState(false);
 
   const inactiveDepts = departmentKPIs.filter(d => d.isInactiveWarning);
 
@@ -101,8 +111,12 @@ export const Header: React.FC<{
       <div className="px-4 lg:px-6 py-2.5 flex items-center justify-between gap-4">
         {/* Left: Branding & Municipal Crest */}
         <div className="flex items-center gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-600 via-blue-600 to-indigo-700 flex items-center justify-center shadow-lg shadow-sky-900/30 border border-sky-400/30">
-            <Building2 className="w-6 h-6 text-white" />
+          <div className="relative shrink-0 flex items-center justify-center">
+            <img 
+              src="/logo.png" 
+              alt="Escudo Oficial Municipalidad de Itá Ibaté" 
+              className="w-11 h-11 object-contain drop-shadow hover:scale-105 transition-transform"
+            />
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -259,6 +273,21 @@ export const Header: React.FC<{
                 <div className="py-1">
                   <button
                     onClick={() => {
+                      setShowUserMenu(false);
+                      setCurrentPassInput('');
+                      setNewPassInput('');
+                      setConfirmPassInput('');
+                      setPassError(null);
+                      setPassSuccess(false);
+                      setShowPasswordModal(true);
+                    }}
+                    className="w-full text-left px-2 py-1.5 text-sky-300 hover:bg-sky-950/40 rounded flex items-center gap-2 cursor-pointer"
+                  >
+                    <KeyRound className="w-3.5 h-3.5 text-sky-400" />
+                    Cambiar Contraseña de Acceso
+                  </button>
+                  <button
+                    onClick={() => {
                       resetAllData();
                       setShowUserMenu(false);
                     }}
@@ -283,6 +312,129 @@ export const Header: React.FC<{
           </div>
         </div>
       </div>
+
+      {/* Modal: Cambiar Contraseña de Acceso */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-sky-500/20 border border-sky-500/40 flex items-center justify-center">
+                  <KeyRound className="w-4 h-4 text-sky-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm">Cambiar Contraseña de Acceso</h3>
+                  <p className="text-[11px] text-slate-400">Modificar la clave de ingreso institucional</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowPasswordModal(false)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {passSuccess ? (
+              <div className="p-4 bg-emerald-950/70 border border-emerald-500/40 rounded-xl text-center space-y-2">
+                <p className="text-xs font-bold text-emerald-300">¡Contraseña modificada exitosamente!</p>
+                <p className="text-[11px] text-emerald-400/80">La nueva contraseña está activa y sincronizada en el sistema.</p>
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordModal(false)}
+                  className="mt-2 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                >
+                  Entendido
+                </button>
+              </div>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setPassError(null);
+                  if (newPassInput !== confirmPassInput) {
+                    setPassError('La nueva contraseña y su confirmación no coinciden.');
+                    return;
+                  }
+                  const res = changeSystemPassword(currentPassInput, newPassInput);
+                  if (!res.success) {
+                    setPassError(res.error || 'Error al cambiar la contraseña.');
+                  } else {
+                    setPassSuccess(true);
+                  }
+                }}
+                className="space-y-3 text-xs"
+              >
+                {passError && (
+                  <div className="p-2.5 bg-rose-950/70 border border-rose-500/40 rounded-xl text-rose-300 text-[11px]">
+                    {passError}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">
+                    Contraseña Actual:
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={currentPassInput}
+                    onChange={(e) => setCurrentPassInput(e.target.value)}
+                    placeholder="Clave actual (inicial: Gestion2629)"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">
+                    Nueva Contraseña:
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={newPassInput}
+                    onChange={(e) => setNewPassInput(e.target.value)}
+                    placeholder="Mínimo 6 caracteres"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">
+                    Confirmar Nueva Contraseña:
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={confirmPassInput}
+                    onChange={(e) => setConfirmPassInput(e.target.value)}
+                    placeholder="Repita la nueva contraseña"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswordModal(false)}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg font-medium cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg font-bold shadow-md cursor-pointer flex items-center gap-1.5"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>Guardar Nueva Contraseña</span>
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 };

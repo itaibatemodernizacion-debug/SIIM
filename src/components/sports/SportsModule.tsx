@@ -89,7 +89,13 @@ export const SportsModule: React.FC = () => {
     category: 'Libre',
     teamOrClub: '',
     participationDate: new Date().toISOString().split('T')[0],
-    location: SPORT_LOCATIONS[0]
+    location: SPORT_LOCATIONS[0],
+    isMinor: false,
+    age: '' as string | number,
+    tutorName: '',
+    tutorDni: '',
+    tutorPhone: '',
+    tutorRelationship: 'Madre'
   });
 
   // Handle DNI autofill for participant
@@ -145,10 +151,18 @@ export const SportsModule: React.FC = () => {
       return;
     }
 
+    if (participantForm.isMinor) {
+      if (!participantForm.tutorName.trim() || !participantForm.tutorDni.trim() || !participantForm.tutorPhone.trim()) {
+        alert('Para menores de edad, es obligatorio registrar los datos del Tutor Responsable (Nombre, DNI y Teléfono de contacto).');
+        return;
+      }
+    }
+
     const evt = sportsEvents.find(e => e.id === participantForm.eventId);
 
     addSportParticipant({
       ...participantForm,
+      age: participantForm.age ? Number(participantForm.age) : undefined,
       eventName: evt?.name || 'Evento Deportivo Municipal'
     });
 
@@ -164,7 +178,13 @@ export const SportsModule: React.FC = () => {
       category: 'Libre',
       teamOrClub: '',
       participationDate: new Date().toISOString().split('T')[0],
-      location: SPORT_LOCATIONS[0]
+      location: SPORT_LOCATIONS[0],
+      isMinor: false,
+      age: '',
+      tutorName: '',
+      tutorDni: '',
+      tutorPhone: '',
+      tutorRelationship: 'Madre'
     });
   };
 
@@ -488,8 +508,20 @@ export const SportsModule: React.FC = () => {
                 <tbody className="divide-y divide-slate-800/60">
                   {filteredParticipants.map(part => (
                     <tr key={part.id} className="hover:bg-slate-800/40 transition">
-                      <td className="py-2.5 px-3.5 font-bold text-slate-100">
-                        {part.fullName}
+                      <td className="py-2.5 px-3.5 text-slate-100">
+                        <div className="font-bold flex items-center gap-1.5">
+                          {part.fullName}
+                          {part.isMinor && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              Menor ({part.age ? `${part.age} años` : 'Sub-18'})
+                            </span>
+                          )}
+                        </div>
+                        {part.isMinor && part.tutorName && (
+                          <div className="text-[11px] text-slate-400 mt-0.5">
+                            <span className="text-slate-500">Tutor:</span> {part.tutorName} ({part.tutorRelationship || 'Tutor'}) · Tel: {part.tutorPhone || '-'}
+                          </div>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 font-mono text-slate-400">
                         {maskDni(part.dni)}
@@ -802,12 +834,118 @@ export const SportsModule: React.FC = () => {
                   <label className="block text-slate-300 font-medium mb-1">Categoría</label>
                   <input
                     type="text"
-                    placeholder="Ej. Libre, Juvenil, Veteranos"
+                    placeholder="Ej. Libre, Infantil, Juvenil"
                     value={participantForm.category}
                     onChange={(e) => setParticipantForm({ ...participantForm, category: e.target.value })}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-orange-500"
                   />
                 </div>
+              </div>
+
+              {/* Sección Menor de Edad y Tutor Responsable */}
+              <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="isMinorSportCheck"
+                      checked={participantForm.isMinor}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setParticipantForm(prev => ({ ...prev, isMinor: checked }));
+                      }}
+                      className="w-4 h-4 rounded text-orange-600 bg-slate-900 border-slate-700 focus:ring-orange-500"
+                    />
+                    <label htmlFor="isMinorSportCheck" className="text-slate-200 font-semibold cursor-pointer">
+                      ¿El participante es menor de 18 años?
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <label className="text-slate-400 text-xs">Edad:</label>
+                    <input
+                      type="number"
+                      min="3"
+                      max="100"
+                      placeholder="Ej. 13"
+                      value={participantForm.age}
+                      onChange={(e) => {
+                        const ageVal = e.target.value;
+                        const ageNum = parseInt(ageVal, 10);
+                        setParticipantForm(prev => ({
+                          ...prev,
+                          age: ageVal,
+                          isMinor: !isNaN(ageNum) && ageNum < 18 ? true : prev.isMinor
+                        }));
+                      }}
+                      className="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white text-center font-mono focus:outline-none focus:border-orange-500"
+                    />
+                  </div>
+                </div>
+
+                {participantForm.isMinor && (
+                  <div className="pt-2 border-t border-slate-800/80 space-y-2.5">
+                    <div className="flex items-center gap-1.5 text-amber-400 font-semibold text-[11px]">
+                      <span>⚠️ Datos Obligatorios del Tutor / Adulto Responsable (Resolución Municipal)</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-slate-400 text-[11px] mb-1">Nombre Completo del Tutor (*)</label>
+                        <input
+                          type="text"
+                          required={participantForm.isMinor}
+                          placeholder="Ej. Juan Carlos Romero"
+                          value={participantForm.tutorName}
+                          onChange={(e) => setParticipantForm({ ...participantForm, tutorName: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-orange-500 text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-400 text-[11px] mb-1">DNI del Tutor (*)</label>
+                        <input
+                          type="text"
+                          required={participantForm.isMinor}
+                          placeholder="Ej. 28.455.901"
+                          value={participantForm.tutorDni}
+                          onChange={(e) => setParticipantForm({ ...participantForm, tutorDni: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-orange-500 font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-slate-400 text-[11px] mb-1">Teléfono de Contacto del Tutor (*)</label>
+                        <input
+                          type="text"
+                          required={participantForm.isMinor}
+                          placeholder="Ej. 3781-488902"
+                          value={participantForm.tutorPhone}
+                          onChange={(e) => setParticipantForm({ ...participantForm, tutorPhone: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-orange-500 text-xs"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-400 text-[11px] mb-1">Vínculo / Parentesco (*)</label>
+                        <select
+                          value={participantForm.tutorRelationship}
+                          onChange={(e) => setParticipantForm({ ...participantForm, tutorRelationship: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-orange-500 text-xs"
+                        >
+                          <option value="Madre">Madre</option>
+                          <option value="Padre">Padre</option>
+                          <option value="Tutor Legal">Tutor Legal</option>
+                          <option value="Abuelo/a">Abuelo / Abuela</option>
+                          <option value="Tío/a">Tío / Tía</option>
+                          <option value="Hermano/a Mayor">Hermano/a Mayor</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-800">

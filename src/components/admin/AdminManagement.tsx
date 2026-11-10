@@ -19,7 +19,12 @@ import {
   Save, 
   RotateCcw,
   Sparkles,
-  Layers
+  Layers,
+  KeyRound,
+  Globe,
+  Database,
+  CheckCircle2,
+  Trash
 } from 'lucide-react';
 
 export const AdminManagement: React.FC = () => {
@@ -30,12 +35,27 @@ export const AdminManagement: React.FC = () => {
     deleteDepartment, 
     departmentKPIs,
     auditLogs,
-    resetAllData 
+    resetAllData,
+    clearDemoData,
+    tickets,
+    citizens,
+    fundAllocations,
+    expenses,
+    employees,
+    culturalStudents,
+    driversLicenses,
+    trafficFines
   } = useMunicipalData();
 
-  const { users, currentUser, addUser, deleteUser, isAdmin } = useAuth();
+  const { users, currentUser, addUser, deleteUser, isAdmin, changeSystemPassword } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'AREAS' | 'ORGANIGRAMA' | 'USERS' | 'AUDIT' | 'BACKUP'>('ORGANIGRAMA');
+
+  // Password modification state in Admin
+  const [adminCurrentPass, setAdminCurrentPass] = useState('');
+  const [adminNewPass, setAdminNewPass] = useState('');
+  const [adminConfirmPass, setAdminConfirmPass] = useState('');
+  const [adminPassMessage, setAdminPassMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Quick Leader Edit Modal State
   const [showQuickLeaderModal, setShowQuickLeaderModal] = useState(false);
@@ -65,7 +85,7 @@ export const AdminManagement: React.FC = () => {
     phone: string;
     color: string;
     icon: string;
-    moduleType: 'GENERAL' | 'DEPORTES' | 'ACCION_SOCIAL' | 'OBRAS_PUBLICAS' | 'CULTURA' | 'PUNTO_DIGITAL' | 'TURISMO' | 'SALUD' | 'CONTROL_URBANO';
+    moduleType: 'GENERAL' | 'DEPORTES' | 'ACCION_SOCIAL' | 'OBRAS_PUBLICAS' | 'CULTURA' | 'PUNTO_DIGITAL' | 'TURISMO' | 'SALUD' | 'CONTROL_URBANO' | 'RRHH';
   }>({
     name: '',
     shortName: '',
@@ -221,9 +241,17 @@ export const AdminManagement: React.FC = () => {
     const backupData = {
       timestamp: new Date().toISOString(),
       institution: 'Municipalidad de Itá Ibaté - Corrientes',
-      version: '1.0',
+      version: '2.5',
       departments,
       users,
+      tickets,
+      citizens,
+      fundAllocations,
+      expenses,
+      employees,
+      culturalStudents,
+      driversLicenses,
+      trafficFines,
       auditLogs
     };
 
@@ -322,8 +350,8 @@ export const AdminManagement: React.FC = () => {
               : 'text-slate-400 hover:text-white hover:bg-slate-800'
           }`}
         >
-          <Download className="w-3.5 h-3.5" />
-          <span>Copias de Seguridad</span>
+          <Settings className="w-3.5 h-3.5" />
+          <span>Limpieza Demo, Clave & Netlify</span>
         </button>
       </div>
 
@@ -710,46 +738,298 @@ export const AdminManagement: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 4: BACKUP & RESTORE */}
+      {/* TAB 4: LIMPIEZA DEMO, CONTRASEÑA, BASE DE DATOS & NETLIFY */}
       {activeTab === 'BACKUP' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-            <h3 className="font-bold text-white text-sm flex items-center gap-2">
-              <Download className="w-4 h-4 text-emerald-400" />
-              Copia de Seguridad del Sistema (Backup JSON)
-            </h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Descargue un archivo consolidado con la configuración de áreas, usuarios, ciudadanos registrados y bitácora de auditoría.
-            </p>
-            <button
-              onClick={handleExportBackup}
-              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              <span>Generar y Descargar Backup Oficial</span>
-            </button>
+        <div className="space-y-6">
+          {/* Top Banner */}
+          <div className="bg-gradient-to-r from-slate-900 via-sky-950/40 to-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Settings className="w-5 h-5 text-sky-400" />
+                <h3 className="font-bold text-white text-base">
+                  Mantenimiento del Sistema, Puesta en Producción y Despliegue
+                </h3>
+              </div>
+              <p className="text-xs text-slate-400">
+                Herramientas para purgar los datos de demostración, gestionar la contraseña de acceso institucional y publicar el sistema en Netlify.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5">
+                <Database className="w-3.5 h-3.5" />
+                Base de Datos: Persistencia Activa
+              </span>
+            </div>
           </div>
 
-          <div className="bg-slate-900 border border-amber-900/40 rounded-2xl p-5 shadow-sm space-y-4">
-            <h3 className="font-bold text-amber-300 text-sm flex items-center gap-2">
-              <RotateCcw className="w-4 h-4 text-amber-400" />
-              Restablecer Datos Iniciales de Demostración
-            </h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Reinicia los registros a la configuración base de la Municipalidad de Itá Ibaté con los datos de prueba de todas las dependencias.
-            </p>
-            <button
-              onClick={() => {
-                if (confirm('¿Está seguro de reiniciar los datos a la demostración inicial de Itá Ibaté?')) {
-                  resetAllData();
-                  alert('Datos restablecidos correctamente.');
-                }
-              }}
-              className="px-4 py-2.5 bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 border border-amber-500/40 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-2"
-            >
-              <RotateCcw className="w-4 h-4" />
-              <span>Restablecer Datos Base de Itá Ibaté</span>
-            </button>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Card 1: Limpieza de Datos Demo para Producción */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <Trash className="w-4 h-4 text-rose-400" />
+                  <span>Limpiar Datos Demo y Comenzar en Producción</span>
+                </h3>
+                <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                  Producción Limpia
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Esta función purga todos los trámites, atenciones ciudadanas, fondos y gastos de prueba, dejando la base de datos totalmente en blanco para comenzar la gestión real del Municipio. 
+                <strong className="text-slate-200 block mt-1">
+                  Se conservan intactos: la estructura orgánica oficial, las secretarías, direcciones, funcionarios a cargo y las categorías de gastos.
+                </strong>
+              </p>
+
+              <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl space-y-1.5 text-xs text-slate-300">
+                <div className="font-semibold text-slate-200">Recomendación de seguridad:</div>
+                <div className="text-[11px] text-slate-400">
+                  Antes de limpiar los datos, puede descargar una copia de seguridad consolidada en formato JSON para guardar el estado actual.
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  onClick={handleExportBackup}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-md transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Descargar Backup Preventivo (.json)</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const confirmClean = window.confirm(
+                      '⚠️ ¿CONFIRMA LA LIMPIEZA DE DATOS DEMO?\n\nEsta acción eliminará todos los trámites, atenciones, fondos, gastos, multas, carnets y participantes de prueba para dejar el sistema listo para operar en PRODUCCIÓN con datos reales.\n\nEl organigrama oficial y las autoridades a cargo se mantendrán.'
+                    );
+                    if (confirmClean) {
+                      clearDemoData();
+                      alert('✓ Datos demo purgados exitosamente. El sistema está limpio y listo para producción.');
+                    }
+                  }}
+                  className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Trash className="w-3.5 h-3.5" />
+                  <span>Limpiar Datos Demo (Iniciar en Limpio)</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (confirm('¿Desea restablecer los datos de muestra iniciales con ejemplos de todas las áreas?')) {
+                      resetAllData();
+                      alert('✓ Datos de demostración restablecidos.');
+                    }
+                  }}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Restablecer Datos de Demostración</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Card 2: Contraseña de Acceso Institucional */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <KeyRound className="w-4 h-4 text-sky-400" />
+                  <span>Contraseña Maestra de Acceso al Sistema</span>
+                </h3>
+                <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                  Seguridad
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-400 leading-relaxed">
+                El sistema restringe el ingreso exigiendo una contraseña de seguridad. La clave inicial configurada es <strong className="text-sky-300 font-mono font-bold bg-sky-950/60 px-1.5 py-0.5 rounded border border-sky-500/30">Gestion2629</strong>. Puede modificarla en cualquier momento desde este formulario.
+              </p>
+
+              {adminPassMessage && (
+                <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                  adminPassMessage.type === 'success' 
+                    ? 'bg-emerald-950/70 border border-emerald-500/40 text-emerald-300' 
+                    : 'bg-rose-950/70 border border-rose-500/40 text-rose-300'
+                }`}>
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{adminPassMessage.text}</span>
+                </div>
+              )}
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setAdminPassMessage(null);
+                  if (adminNewPass !== adminConfirmPass) {
+                    setAdminPassMessage({ type: 'error', text: 'La nueva contraseña y su confirmación no coinciden.' });
+                    return;
+                  }
+                  const res = changeSystemPassword(adminCurrentPass, adminNewPass);
+                  if (!res.success) {
+                    setAdminPassMessage({ type: 'error', text: res.error || 'Error al cambiar contraseña.' });
+                  } else {
+                    setAdminPassMessage({ type: 'success', text: '✓ Contraseña de acceso actualizada exitosamente.' });
+                    setAdminCurrentPass('');
+                    setAdminNewPass('');
+                    setAdminConfirmPass('');
+                  }
+                }}
+                className="space-y-3 text-xs"
+              >
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">
+                    Contraseña Actual:
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={adminCurrentPass}
+                    onChange={(e) => setAdminCurrentPass(e.target.value)}
+                    placeholder="Contraseña actual (inicial: Gestion2629)"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">
+                      Nueva Contraseña:
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={adminNewPass}
+                      onChange={(e) => setAdminNewPass(e.target.value)}
+                      placeholder="Mínimo 6 caracteres"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">
+                      Confirmar Nueva Contraseña:
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={adminConfirmPass}
+                      onChange={(e) => setAdminConfirmPass(e.target.value)}
+                      placeholder="Repetir nueva clave"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>Actualizar Contraseña de Acceso</span>
+                </button>
+              </form>
+            </div>
+
+            {/* Card 3: Guía de Publicación en Netlify */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-teal-400" />
+                  <span>Publicación y Despliegue en Netlify</span>
+                </h3>
+                <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                  Listo para Netlify
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Este sistema está 100% preparado y optimizado para ser publicado en <strong>Netlify</strong>. Ya incluye automáticamente los archivos de configuración de enrutamiento y compilación necesarios:
+              </p>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <div>
+                    <div className="font-mono text-white text-[11px]">public/_redirects</div>
+                    <div className="text-[10px] text-slate-400">Reglas SPA (/* /index.html 200)</div>
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <div>
+                    <div className="font-mono text-white text-[11px]">netlify.toml</div>
+                    <div className="text-[10px] text-slate-400">Build: dist (Node 20)</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2.5 text-xs text-slate-300">
+                <div className="font-bold text-slate-200">Pasos para publicar en 2 minutos:</div>
+                <ol className="list-decimal pl-4 space-y-1.5 text-slate-400 text-[11px]">
+                  <li>
+                    <strong className="text-slate-200">Opción 1 (Sin código / Drag & Drop):</strong> Ejecute <code className="bg-slate-950 px-1 py-0.5 rounded text-sky-400 font-mono">npm run build</code>, y luego arrastre la carpeta <code className="bg-slate-950 px-1 py-0.5 rounded text-sky-400 font-mono">dist</code> directamente en <strong className="text-teal-300">app.netlify.com/drop</strong>.
+                  </li>
+                  <li>
+                    <strong className="text-slate-200">Opción 2 (GitHub / GitLab):</strong> Conecte el repositorio en Netlify. Los parámetros automáticos son:
+                    <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                      <li>Build Command: <code className="bg-slate-950 px-1 rounded text-sky-400 font-mono">npm run build</code></li>
+                      <li>Publish Directory: <code className="bg-slate-950 px-1 rounded text-sky-400 font-mono">dist</code></li>
+                    </ul>
+                  </li>
+                </ol>
+              </div>
+            </div>
+
+            {/* Card 4: Base de Datos y Persistencia de Cambios */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <Database className="w-4 h-4 text-sky-400" />
+                  <span>Base de Datos Real y Persistencia de Cambios</span>
+                </h3>
+                <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                  Activa
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Todos los cambios realizados en el sistema (nuevos trámites, entregas de fondos, gastos, personal de RRHH, actas necrológicas, multas, cursos y autoridades) se guardan automáticamente con doble capa de persistencia:
+              </p>
+
+              <div className="space-y-2 text-xs">
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-white">Almacenamiento Local Seguro y Permanente</div>
+                    <div className="text-[11px] text-slate-400">
+                      Garantiza velocidad instantánea y funcionamiento continuo incluso sin internet o en conexiones inestables.
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-white">Sincronización Cloud con Firebase Firestore</div>
+                    <div className="text-[11px] text-slate-400">
+                      Integrado con el backend de Google Firebase configurado en <code className="text-sky-300 font-mono">firebase-applet-config.json</code>.
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-white">Exportación e Importación de Respaldo Oficial</div>
+                    <div className="text-[11px] text-slate-400">
+                      Permite descargar en cualquier momento el paquete consolidado de datos para auditorías o migraciones de servidor.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -852,6 +1132,7 @@ export const AdminManagement: React.FC = () => {
                     <option value="CULTURA">Cultura (Talleres y Festivales)</option>
                     <option value="SALUD">Salud y SAPS (Atención Sanitaria y Bromatología)</option>
                     <option value="CONTROL_URBANO">Control Urbano (Carnets, Multas, Habilitaciones y Vial)</option>
+                    <option value="RRHH">Recursos Humanos (Nómina y Legajos de Personal)</option>
                   </select>
                 </div>
 

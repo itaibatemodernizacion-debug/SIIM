@@ -10,7 +10,9 @@ import {
   DriversLicenseRecord,
   TrafficFineRecord,
   CommercialLicenseRecord,
-  TrafficCheckpointRecord
+  TrafficCheckpointRecord,
+  MunicipalEmployee,
+  CulturalStudent
 } from '../types';
 
 export interface ParsedMunicipalRow {
@@ -543,3 +545,76 @@ export const exportTrafficCheckpointsToExcel = (checkpoints: TrafficCheckpointRe
   XLSX.writeFile(wb, `Operativos_Control_Vial_ItaIbate_${timestamp}.xlsx`);
 };
 
+// Export Plantel de Personal Municipal (Recursos Humanos)
+export const exportEmployeesToExcel = (employees: MunicipalEmployee[]): void => {
+  const conditionLabels: Record<string, string> = {
+    PLANTA_PERMANENTE: 'Planta Permanente',
+    CONTRATADO: 'Contratado',
+    PERSONAL_DE_GABINETE: 'Personal de Gabinete',
+    JORNALIZADO: 'Jornalizado'
+  };
+
+  const data = employees.map(e => ({
+    'N° Legajo': e.fileNumber,
+    'Nombre Completo': e.fullName,
+    'DNI': e.dni,
+    'CUIL': e.cuil,
+    'Fecha Nacimiento': e.birthDate || '-',
+    'Género': e.gender || '-',
+    'Nacionalidad': e.nationality,
+    'Teléfono': e.phone,
+    'Correo Electrónico': e.email || '-',
+    'Domicilio': e.address,
+    'Barrio': e.neighborhood,
+    'Condición Laboral': conditionLabels[e.employmentCondition] || e.employmentCondition,
+    'Área / Dependencia': e.departmentId,
+    'Cargo / Función': e.position,
+    'Categoría / Escalafón': e.categoryOrScale || '-',
+    'Fecha de Ingreso': e.entryDate,
+    'Estado': e.status,
+    'Turno': e.workShift || '-',
+    'Carga Horaria Semanal': e.hoursPerWeek ? `${e.hoursPerWeek} hs` : '-',
+    'Básico / Asignación ($)': e.basicSalary || 0,
+    'CBU / Cuenta Sueldo': e.bankAccountNumber || '-',
+    'Obra Social': e.socialSecurityNumber || '-',
+    'Contacto Emergencia': e.emergencyContactName || '-',
+    'Teléfono Emergencia': e.emergencyContactPhone || '-',
+    'Observaciones': e.notes || '-'
+  }));
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(data);
+  XLSX.utils.book_append_sheet(wb, ws, 'Personal_Municipal');
+  const timestamp = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(wb, `Nomina_Personal_ItaIbate_${timestamp}.xlsx`);
+};
+
+// Export Alumnos de Talleres y Cursos Oficiales (Cultura y Educación)
+export const exportCulturalStudentsToExcel = (students: CulturalStudent[]): void => {
+  const data = students.map(s => ({
+    'N° Matrícula': s.enrollmentNumber,
+    'Nombre y Apellido': s.fullName,
+    'DNI': s.dni,
+    'Edad': s.age ?? '-',
+    '¿Es Menor de Edad?': s.isMinor ? 'SÍ' : 'NO',
+    'Tutor Responsable': s.isMinor ? (s.tutorName || '-') : 'No aplica (Mayor de edad)',
+    'DNI Tutor': s.isMinor ? (s.tutorDni || '-') : '-',
+    'Teléfono Tutor': s.isMinor ? (s.tutorPhone || '-') : '-',
+    'Vínculo Tutor': s.isMinor ? (s.tutorRelationship || '-') : '-',
+    'Curso / Taller': s.course,
+    'Turno': s.shift,
+    'Docente a Cargo': s.teacherName || '-',
+    'Teléfono Contacto': s.phone,
+    'Domicilio': s.address,
+    'Barrio': s.neighborhood,
+    'Fecha de Inscripción': s.enrollmentDate,
+    'Estado': s.status,
+    'Observaciones': s.notes || '-'
+  }));
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(data);
+  XLSX.utils.book_append_sheet(wb, ws, 'Alumnos_Cultura_Educacion');
+  const timestamp = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(wb, `Alumnos_Cursos_Cultura_ItaIbate_${timestamp}.xlsx`);
+};

@@ -28,11 +28,15 @@ import {
   BookmarkCheck,
   X,
   Layers,
-  Shield
+  Shield,
+  Trophy
 } from 'lucide-react';
 import { exportTicketsToExcel } from '../../lib/excelUtils';
 import { NecrologicalRegistry } from '../necrological/NecrologicalRegistry';
 import { UrbanControlModule } from '../urban-control/UrbanControlModule';
+import { HumanResourcesModule } from '../rrhh/HumanResourcesModule';
+import { CultureEducationModule } from '../culture/CultureEducationModule';
+import { SportsModule } from '../sports/SportsModule';
 
 const PROVINCES_TOURISM = [
   'Corrientes (Capital e Interior)',
@@ -48,15 +52,24 @@ const PROVINCES_TOURISM = [
 ];
 
 export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDeptId }) => {
-  const { departments, tickets, createTicket, updateTicketStatus, findCitizenByDni, updateDepartmentLeader } = useMunicipalData();
+  const { 
+    departments, 
+    tickets, 
+    createTicket, 
+    updateTicketStatus, 
+    findCitizenByDni, 
+    updateDepartmentLeader,
+    addCulturalStudent,
+    addSportParticipant
+  } = useMunicipalData();
   const { currentUser, isAdmin, maskSensitiveData } = useAuth();
 
   // If user is restricted to a department, lock to that department; otherwise allow selector
   const defaultDeptId = initialDeptId || currentUser?.departmentId || departments[0]?.id;
   const [activeDeptId, setActiveDeptId] = useState<string>(defaultDeptId);
 
-  // Sub-view toggle (TICKETS vs NECROLOGICAL for Social Development vs CONTROL_URBANO for Urban Control)
-  const [activeSubView, setActiveSubView] = useState<'TICKETS' | 'NECROLOGICAL' | 'CONTROL_URBANO'>('TICKETS');
+  // Sub-view toggle (TICKETS, NECROLOGICAL, CONTROL_URBANO, RRHH, CULTURE, SPORTS)
+  const [activeSubView, setActiveSubView] = useState<'TICKETS' | 'NECROLOGICAL' | 'CONTROL_URBANO' | 'RRHH' | 'CULTURE' | 'SPORTS'>('TICKETS');
 
   // Edit Leader Modal state
   const [showLeaderModal, setShowLeaderModal] = useState(false);
@@ -79,6 +92,19 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
                              activeDept?.moduleType === 'CONTROL_URBANO' ||
                              activeDept?.name?.toLowerCase().includes('control urbano') ||
                              activeDept?.name?.toLowerCase().includes('seguridad ciudadana');
+
+  const isRRHHArea = activeDept?.id === 'coord-rrhh' ||
+                     activeDept?.moduleType === 'RRHH' ||
+                     activeDept?.name?.toLowerCase().includes('recursos humanos');
+
+  const isCultureArea = activeDept?.id === 'sec-cultura' ||
+                        activeDept?.moduleType === 'CULTURA' ||
+                        activeDept?.name?.toLowerCase().includes('cultura y educación') ||
+                        activeDept?.name?.toLowerCase().includes('cultura');
+
+  const isSportsArea = activeDept?.id === 'dir-deportes' ||
+                       activeDept?.moduleType === 'DEPORTES' ||
+                       activeDept?.name?.toLowerCase().includes('deportes');
 
   const openLeaderEditModal = () => {
     if (!activeDept) return;
@@ -123,7 +149,15 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
   
   const [puntoDigitalType, setPuntoDigitalType] = useState('Trámite Mi ANSES / AUH');
   const [tourismOrigin, setTourismOrigin] = useState(PROVINCES_TOURISM[0]);
-  const [cultureWorkshop, setCultureWorkshop] = useState('Taller de Danza Chamamecera');
+  const [cultureCourse, setCultureCourse] = useState<'URBANO' | 'BALLET' | 'MÚSICA' | 'FOLKLORE'>('URBANO');
+  const [sportDiscipline, setSportDiscipline] = useState('Fútbol');
+  
+  // Minor & Tutor fields for fast form (Cultura y Deportes)
+  const [fastIsMinor, setFastIsMinor] = useState(false);
+  const [fastTutorName, setFastTutorName] = useState('');
+  const [fastTutorDni, setFastTutorDni] = useState('');
+  const [fastTutorPhone, setFastTutorPhone] = useState('');
+  const [fastTutorRelationship, setFastTutorRelationship] = useState('Madre');
 
   // Autofill when entering citizen DNI
   const handleDniLookup = (dni: string) => {
@@ -171,9 +205,74 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
       finalDescription = finalDescription || `Atención de visitante procedente de ${tourismOrigin}. Asesoramiento turístico y pesca deportiva.`;
       areaSpecificData = { origin: tourismOrigin };
     } else if (activeDept?.moduleType === 'CULTURA') {
-      finalRequestType = finalRequestType || `Cultura: ${cultureWorkshop}`;
-      finalDescription = finalDescription || `Inscripción o gestión cultural en ${cultureWorkshop}.`;
-      areaSpecificData = { workshop: cultureWorkshop };
+      if (fastIsMinor && (!fastTutorName.trim() || !fastTutorDni.trim() || !fastTutorPhone.trim())) {
+        alert('Para menores de edad que se inscriben a cursos de Cultura, es obligatorio completar los datos del Tutor Responsable.');
+        return;
+      }
+      finalRequestType = finalRequestType || `Inscripción Curso Oficial: ${cultureCourse}`;
+      finalDescription = finalDescription || `Inscripción a taller de ${cultureCourse}.${fastIsMinor ? ` [Alumno Menor de Edad - Tutor: ${fastTutorName}, DNI ${fastTutorDni}, Tel ${fastTutorPhone}, Vínculo: ${fastTutorRelationship}]` : ''}`;
+      areaSpecificData = { 
+        course: cultureCourse,
+        isMinor: fastIsMinor,
+        tutorName: fastIsMinor ? fastTutorName : undefined,
+        tutorDni: fastIsMinor ? fastTutorDni : undefined,
+        tutorPhone: fastIsMinor ? fastTutorPhone : undefined,
+        tutorRelationship: fastIsMinor ? fastTutorRelationship : undefined
+      };
+
+      // Registrar también en el padrón de alumnos de cultura
+      addCulturalStudent({
+        fullName: citizenName,
+        dni: citizenDni,
+        phone: citizenPhone,
+        address: citizenAddress || 'Itá Ibaté',
+        neighborhood: citizenNeighborhood || ITA_IBATE_NEIGHBORHOODS[0],
+        course: cultureCourse,
+        shift: 'TARDE',
+        enrollmentDate: new Date().toISOString().split('T')[0],
+        status: 'ACTIVO',
+        isMinor: fastIsMinor,
+        tutorName: fastIsMinor ? fastTutorName : undefined,
+        tutorDni: fastIsMinor ? fastTutorDni : undefined,
+        tutorPhone: fastIsMinor ? fastTutorPhone : undefined,
+        tutorRelationship: fastIsMinor ? fastTutorRelationship : undefined
+      });
+    } else if (activeDept?.moduleType === 'DEPORTES') {
+      if (fastIsMinor && (!fastTutorName.trim() || !fastTutorDni.trim() || !fastTutorPhone.trim())) {
+        alert('Para menores de edad que se inscriben a Deportes, es obligatorio completar los datos del Tutor Responsable.');
+        return;
+      }
+      finalRequestType = finalRequestType || `Inscripción Deportiva: ${sportDiscipline}`;
+      finalDescription = finalDescription || `Inscripción en disciplina deportiva: ${sportDiscipline}.${fastIsMinor ? ` [Deportista Menor de Edad - Tutor: ${fastTutorName}, DNI ${fastTutorDni}, Tel ${fastTutorPhone}, Vínculo: ${fastTutorRelationship}]` : ''}`;
+      areaSpecificData = { 
+        discipline: sportDiscipline,
+        isMinor: fastIsMinor,
+        tutorName: fastIsMinor ? fastTutorName : undefined,
+        tutorDni: fastIsMinor ? fastTutorDni : undefined,
+        tutorPhone: fastIsMinor ? fastTutorPhone : undefined,
+        tutorRelationship: fastIsMinor ? fastTutorRelationship : undefined
+      };
+
+      // Registrar también en el padrón de deportistas
+      addSportParticipant({
+        eventId: 'evt-2',
+        eventName: `Actividades Deportivas Municipales (${sportDiscipline})`,
+        fullName: citizenName,
+        dni: citizenDni,
+        phone: citizenPhone,
+        address: citizenAddress || 'Itá Ibaté',
+        neighborhood: citizenNeighborhood || ITA_IBATE_NEIGHBORHOODS[0],
+        discipline: sportDiscipline,
+        category: fastIsMinor ? 'Infantil / Juvenil' : 'Libre',
+        teamOrClub: 'Dirección de Deportes Itá Ibaté',
+        participationDate: new Date().toISOString().split('T')[0],
+        location: 'Polideportivo Municipal de Itá Ibaté',
+        isMinor: fastIsMinor,
+        tutorName: fastIsMinor ? fastTutorName : undefined,
+        tutorDni: fastIsMinor ? fastTutorDni : undefined,
+        tutorPhone: fastIsMinor ? fastTutorPhone : undefined,
+        tutorRelationship: fastIsMinor ? fastTutorRelationship : undefined
+      });
     } else {
       finalRequestType = finalRequestType || 'Gestión Administrativa';
       finalDescription = finalDescription || 'Atención ciudadana en mesa del área.';
@@ -201,8 +300,13 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
     setRequestType('');
     setDescription('');
     setWorksStreetName('');
+    setFastIsMinor(false);
+    setFastTutorName('');
+    setFastTutorDni('');
+    setFastTutorPhone('');
+    setFastTutorRelationship('Madre');
     setIsResolvedImmediate(false);
-    alert('Atención registrada con éxito en el sistema.');
+    alert('Atención e inscripción registrada con éxito en el sistema.');
   };
 
   const maskDni = (dni: string) => {
@@ -228,8 +332,12 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
                 setActiveDeptId(d.id);
                 if (d.id === 'dir-gen-seguridad' || d.moduleType === 'CONTROL_URBANO') {
                   setActiveSubView('CONTROL_URBANO');
-                } else if (d.id === 'sec-social' || d.id === 'dir-gen-asistencia-social' || d.parentId === 'sec-social') {
-                  setActiveSubView('TICKETS');
+                } else if (d.id === 'coord-rrhh' || d.moduleType === 'RRHH' || d.name?.toLowerCase().includes('recursos humanos')) {
+                  setActiveSubView('RRHH');
+                } else if (d.id === 'sec-cultura' || d.moduleType === 'CULTURA' || d.name?.toLowerCase().includes('cultura')) {
+                  setActiveSubView('CULTURE');
+                } else if (d.id === 'dir-deportes' || d.moduleType === 'DEPORTES' || d.name?.toLowerCase().includes('deportes')) {
+                  setActiveSubView('SPORTS');
                 } else {
                   setActiveSubView('TICKETS');
                 }
@@ -392,19 +500,130 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
         </div>
       )}
 
-      {/* RENDER VIEW 1: If Social Area and NECROLOGICAL subview is active */}
+      {/* RRHH Sub-View Navigation */}
+      {isRRHHArea && (
+        <div className="bg-slate-900 border border-slate-800 p-2 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveSubView('RRHH')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeSubView === 'RRHH'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Nómina y Legajos de Personal (RRHH)</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSubView('TICKETS')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeSubView === 'TICKETS'
+                  ? 'bg-slate-800 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Mesa de Trámites y Solicitudes</span>
+            </button>
+          </div>
+
+          <span className="text-[11px] text-blue-400 font-semibold pr-2">
+            Coordinación de Recursos Humanos – Art. 21
+          </span>
+        </div>
+      )}
+
+      {/* Cultura Sub-View Navigation */}
+      {isCultureArea && (
+        <div className="bg-slate-900 border border-slate-800 p-2 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveSubView('CULTURE')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeSubView === 'CULTURE'
+                  ? 'bg-pink-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Cursos Oficiales (Urbano, Ballet, Música, Folklore)</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSubView('TICKETS')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeSubView === 'TICKETS'
+                  ? 'bg-slate-800 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Mesa de Entradas Cultural</span>
+            </button>
+          </div>
+
+          <span className="text-[11px] text-pink-400 font-semibold pr-2">
+            Secretaría de Cultura y Educación
+          </span>
+        </div>
+      )}
+
+      {/* Deportes Sub-View Navigation */}
+      {isSportsArea && (
+        <div className="bg-slate-900 border border-slate-800 p-2 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveSubView('SPORTS')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeSubView === 'SPORTS'
+                  ? 'bg-orange-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <Trophy className="w-3.5 h-3.5" />
+              <span>Torneos y Atletas (Inscripción de Menores con Tutor)</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSubView('TICKETS')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeSubView === 'TICKETS'
+                  ? 'bg-slate-800 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Mesa de Trámites Deportivos</span>
+            </button>
+          </div>
+
+          <span className="text-[11px] text-orange-400 font-semibold pr-2">
+            Dirección General de Deportes y Recreación – Art. 30
+          </span>
+        </div>
+      )}
+
+      {/* RENDER VIEW: Specific submodules */}
       {isSocialArea && activeSubView === 'NECROLOGICAL' ? (
         <NecrologicalRegistry />
       ) : isUrbanControlArea && activeSubView === 'CONTROL_URBANO' ? (
-        /* RENDER VIEW 2: If Urban Control Area and CONTROL_URBANO subview is active */
         <UrbanControlModule />
-      ) : (
-        /* Regular tickets workspace */
-        null
-      )}
+      ) : isRRHHArea && activeSubView === 'RRHH' ? (
+        <HumanResourcesModule />
+      ) : isCultureArea && activeSubView === 'CULTURE' ? (
+        <CultureEducationModule />
+      ) : isSportsArea && activeSubView === 'SPORTS' ? (
+        <SportsModule />
+      ) : null}
 
       {/* Grid: Fast Daily Registry Form tailored to the Sector + Recent Sector Records */}
-      {(!isSocialArea || activeSubView === 'TICKETS') && (!isUrbanControlArea || activeSubView === 'TICKETS') && (
+      {(!isSocialArea || activeSubView === 'TICKETS') && 
+       (!isUrbanControlArea || activeSubView === 'TICKETS') && 
+       (!isRRHHArea || activeSubView === 'TICKETS') && 
+       (!isCultureArea || activeSubView === 'TICKETS') && 
+       (!isSportsArea || activeSubView === 'TICKETS') && (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Fast Sector Form */}
         <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
@@ -584,23 +803,170 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
             )}
 
             {activeDept?.moduleType === 'CULTURA' && (
-              <div className="p-3 bg-purple-950/20 border border-purple-500/30 rounded-xl space-y-2.5">
-                <span className="font-bold text-[11px] text-purple-300 block uppercase">
-                  Gestión de Talleres y Eventos Culturales
+              <div className="p-3 bg-pink-950/20 border border-pink-500/30 rounded-xl space-y-2.5">
+                <span className="font-bold text-[11px] text-pink-300 block uppercase">
+                  Cursos Oficiales de la Secretaría de Cultura y Educación
                 </span>
                 <div>
-                  <label className="block text-slate-300 text-[11px] mb-0.5">Taller / Actividad</label>
+                  <label className="block text-slate-300 text-[11px] mb-1">Curso / Taller Oficial (*)</label>
                   <select
-                    value={cultureWorkshop}
-                    onChange={(e) => setCultureWorkshop(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white text-[11px]"
+                    value={cultureCourse}
+                    onChange={(e) => setCultureCourse(e.target.value as any)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs font-semibold focus:outline-none focus:border-pink-500"
                   >
-                    <option value="Taller de Danza Chamamecera">Taller de Danza Chamamecera</option>
-                    <option value="Taller de Artesanías y Telar Criollo">Taller de Artesanías y Telar Criollo</option>
-                    <option value="Coro y Canto Tradicional">Coro y Canto Tradicional</option>
-                    <option value="Solicitud de Escenario / Sonido Municipal">Préstamo de Escenario / Sonido</option>
-                    <option value="Inscripción a Festival Barrial">Inscripción a Festival Barrial</option>
+                    <option value="URBANO">URBANO (Ritmos Urbanos, Street Dance y Hip Hop)</option>
+                    <option value="BALLET">BALLET (Danza Clásica y Expresión Corporal)</option>
+                    <option value="MÚSICA">MÚSICA (Instrumentos Tradicionales, Acordeón y Guitarra)</option>
+                    <option value="FOLKLORE">FOLKLORE (Ballet Folklórico Municipal y Chamamé)</option>
                   </select>
+                </div>
+
+                {/* Menores de edad y Tutor Responsable */}
+                <div className="p-2.5 bg-slate-950/80 border border-amber-500/40 rounded-lg space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="fastCultIsMinor"
+                      checked={fastIsMinor}
+                      onChange={(e) => setFastIsMinor(e.target.checked)}
+                      className="w-4 h-4 rounded text-pink-600 bg-slate-900 border-slate-700 focus:ring-pink-500 cursor-pointer"
+                    />
+                    <label htmlFor="fastCultIsMinor" className="text-amber-300 font-bold text-xs cursor-pointer">
+                      ¿El alumno es menor de 18 años? (Requiere Tutor)
+                    </label>
+                  </div>
+
+                  {fastIsMinor && (
+                    <div className="space-y-2 pt-1 border-t border-amber-500/20 text-[11px]">
+                      <div className="text-amber-400 font-semibold">Datos Obligatorios del Tutor:</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          required={fastIsMinor}
+                          placeholder="Nombre y Apellido Tutor (*)"
+                          value={fastTutorName}
+                          onChange={(e) => setFastTutorName(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-[11px]"
+                        />
+                        <input
+                          type="text"
+                          required={fastIsMinor}
+                          placeholder="DNI del Tutor (*)"
+                          value={fastTutorDni}
+                          onChange={(e) => setFastTutorDni(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono text-[11px]"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          required={fastIsMinor}
+                          placeholder="Teléfono del Tutor (*)"
+                          value={fastTutorPhone}
+                          onChange={(e) => setFastTutorPhone(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-[11px]"
+                        />
+                        <select
+                          value={fastTutorRelationship}
+                          onChange={(e) => setFastTutorRelationship(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-[11px]"
+                        >
+                          <option value="Madre">Madre</option>
+                          <option value="Padre">Padre</option>
+                          <option value="Tutor Legal">Tutor Legal</option>
+                          <option value="Abuelo/a">Abuelo/a</option>
+                          <option value="Tío/a">Tío/a</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeDept?.moduleType === 'DEPORTES' && (
+              <div className="p-3 bg-orange-950/20 border border-orange-500/30 rounded-xl space-y-2.5">
+                <span className="font-bold text-[11px] text-orange-300 block uppercase">
+                  Inscripción en la Dirección General de Deportes
+                </span>
+                <div>
+                  <label className="block text-slate-300 text-[11px] mb-1">Disciplina Deportiva (*)</label>
+                  <select
+                    value={sportDiscipline}
+                    onChange={(e) => setSportDiscipline(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white text-xs font-semibold focus:outline-none focus:border-orange-500"
+                  >
+                    <option value="Fútbol">Fútbol / Fútbol 7</option>
+                    <option value="Fútbol Femenino">Fútbol Femenino</option>
+                    <option value="Pesca Deportiva">Pesca Deportiva de Costa</option>
+                    <option value="Vóley / Beach Vóley">Vóley / Beach Vóley</option>
+                    <option value="Básquet">Básquet</option>
+                    <option value="Atletismo / Maratón">Atletismo y Maratón</option>
+                    <option value="Ciclismo">Ciclismo</option>
+                    <option value="Pádel">Pádel</option>
+                    <option value="Gimnasia y Newcom">Newcom / Gimnasia</option>
+                  </select>
+                </div>
+
+                {/* Menores de edad y Tutor Responsable */}
+                <div className="p-2.5 bg-slate-950/80 border border-amber-500/40 rounded-lg space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="fastSportIsMinor"
+                      checked={fastIsMinor}
+                      onChange={(e) => setFastIsMinor(e.target.checked)}
+                      className="w-4 h-4 rounded text-orange-600 bg-slate-900 border-slate-700 focus:ring-orange-500 cursor-pointer"
+                    />
+                    <label htmlFor="fastSportIsMinor" className="text-amber-300 font-bold text-xs cursor-pointer">
+                      ¿El deportista es menor de 18 años? (Requiere Tutor)
+                    </label>
+                  </div>
+
+                  {fastIsMinor && (
+                    <div className="space-y-2 pt-1 border-t border-amber-500/20 text-[11px]">
+                      <div className="text-amber-400 font-semibold">Datos Obligatorios del Tutor:</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          required={fastIsMinor}
+                          placeholder="Nombre y Apellido Tutor (*)"
+                          value={fastTutorName}
+                          onChange={(e) => setFastTutorName(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-[11px]"
+                        />
+                        <input
+                          type="text"
+                          required={fastIsMinor}
+                          placeholder="DNI del Tutor (*)"
+                          value={fastTutorDni}
+                          onChange={(e) => setFastTutorDni(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white font-mono text-[11px]"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          required={fastIsMinor}
+                          placeholder="Teléfono del Tutor (*)"
+                          value={fastTutorPhone}
+                          onChange={(e) => setFastTutorPhone(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-[11px]"
+                        />
+                        <select
+                          value={fastTutorRelationship}
+                          onChange={(e) => setFastTutorRelationship(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-white text-[11px]"
+                        >
+                          <option value="Madre">Madre</option>
+                          <option value="Padre">Padre</option>
+                          <option value="Tutor Legal">Tutor Legal</option>
+                          <option value="Abuelo/a">Abuelo/a</option>
+                          <option value="Tío/a">Tío/a</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

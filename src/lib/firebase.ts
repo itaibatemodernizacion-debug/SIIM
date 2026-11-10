@@ -7,9 +7,11 @@ import {
   signOut,
   User 
 } from 'firebase/auth';
+import { getFirestore, Firestore } from 'firebase/firestore';
 
 let firebaseApp: any = null;
 let firebaseAuth: any = null;
+let firestoreDb: Firestore | null = null;
 let googleProvider: GoogleAuthProvider | null = null;
 let cachedAccessToken: string | null = null;
 
@@ -31,6 +33,7 @@ try {
   }
 
   firebaseAuth = getAuth(firebaseApp);
+  firestoreDb = getFirestore(firebaseApp);
   googleProvider = new GoogleAuthProvider();
   googleProvider.addScope('https://www.googleapis.com/auth/drive.readonly');
   googleProvider.addScope('https://www.googleapis.com/auth/spreadsheets.readonly');
@@ -38,7 +41,7 @@ try {
   console.warn('Firebase initialization notice:', e);
 }
 
-export { firebaseApp, firebaseAuth };
+export { firebaseApp, firebaseAuth, firestoreDb };
 
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,

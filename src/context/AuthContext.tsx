@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { MunicipalUser, UserRole } from '../types';
 import { INITIAL_USERS } from '../data/initialData';
 import { googleSignIn, firebaseLogout, initAuth } from '../lib/firebase';
+import { syncStateToFirestore } from '../lib/firestoreSync';
 
 interface AuthContextType {
   currentUser: MunicipalUser | null;
@@ -11,6 +12,9 @@ interface AuthContextType {
   loginAsUser: (userId: string) => void;
   loginWithGoogle: () => Promise<void>;
   loginWithCredentials: (email: string, role: UserRole, departmentId?: string, name?: string) => void;
+  loginWithSystemPassword: (password: string, userId?: string, email?: string) => { success: boolean; error?: string };
+  changeSystemPassword: (currentPass: string, newPass: string) => { success: boolean; error?: string };
+  verifySystemPassword: (password: string) => boolean;
   logout: () => void;
   addUser: (user: Omit<MunicipalUser, 'id'>) => void;
   deleteUser: (userId: string) => void;
@@ -23,6 +27,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const USERS_STORAGE_KEY = 'ita_ibate_simm_users';
 const CURRENT_USER_KEY = 'ita_ibate_simm_current_user';
+const SYSTEM_PASSWORD_KEY = 'ita_ibate_system_password';
+const DEFAULT_PASSWORD = 'Gestion2629';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [users, setUsers] = useState<MunicipalUser[]>(() => {
@@ -37,6 +43,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return INITIAL_USERS;
   });
 
+  const [systemPassword, setSystemPassword] = useState<string>(() => {
+    return localStorage.getItem(SYSTEM_PASSWORD_KEY) || DEFAULT_PASSWORD;
+  });
+
   const [currentUser, setCurrentUser] = useState<MunicipalUser | null>(() => {
     const saved = localStorage.getItem(CURRENT_USER_KEY);
     if (saved) {
@@ -46,7 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Failed to parse current user', e);
       }
     }
-    return INITIAL_USERS[0]; // Default to Intendente / Admin for ready inspection
+    return null; // Requires entering system password initially
   });
 
   const [googleToken, setGoogleToken] = useState<string | null>(null);
@@ -65,6 +75,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [currentUser]);
 
   useEffect(() => {
+    localStorage.setItem(SYSTEM_PASSWORD_KEY, systemPassword);
+    // Sync password metadata to cloud database
+    syncStateToFirestore({ systemPasswordLastUpdated: new Date().toISOString() });
+  }, [systemPassword]);
+
+  useEffect(() => {
     // Optional listener for Firebase auth
     const unsubscribe = initAuth(
       (user, token) => {
@@ -78,6 +94,69 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, []);
+
+  const verifySystemPassword = (pass: string): boolean => {
+    return pass.trim() === systemPassword.trim();
+  };
+
+  const loginWithSystemPassword = (
+    pass: string, 
+    userId?: string, 
+    email?: string
+  ): { success: boolean; error?: string } => {
+    if (!verifySystemPassword(pass)) {
+      return { 
+        success: false, 
+        error: 'Contraseña de acceso incorrecta. Recuerde que la clave inicial es "Gestion2629".' 
+      };
+    }
+
+    let userToLogin: MunicipalUser | undefined;
+    if (userId) {
+      userToLogin = users.find(u => u.id === userId);
+    } else if (email) {
+      userToLogin = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    }
+
+    // Default to Intendente / Administrador if not specified
+    if (!userToLogin) {
+      userToLogin = users[0] || {
+        id: 'usr-admin-default',
+        name: 'Intendencia / Administrador',
+        email: 'intendencia@itaibate.gob.ar',
+        role: 'ADMIN_GENERAL',
+        position: 'Intendente Municipal'
+      };
+    }
+
+    setCurrentUser(userToLogin);
+    return { success: true };
+  };
+
+  const changeSystemPassword = (
+    currentPass: string, 
+    newPass: string
+  ): { success: boolean; error?: string } => {
+    if (!verifySystemPassword(currentPass)) {
+      return { 
+        success: false, 
+        error: 'La contraseña actual ingresada es incorrecta.' 
+      };
+    }
+    if (!newPass || newPass.trim().length < 6) {
+      return { 
+        success: false, 
+        error: 'La nueva contraseña debe tener al menos 6 caracteres.' 
+      };
+    }
+
+    const cleanNewPass = newPass.trim();
+    setSystemPassword(cleanNewPass);
+    localStorage.setItem(SYSTEM_PASSWORD_KEY, cleanNewPass);
+    syncStateToFirestore({ systemPassword: cleanNewPass });
+
+    return { success: true };
+  };
 
   const loginAsUser = (userId: string) => {
     const found = users.find(u => u.id === userId);
@@ -150,6 +229,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setGoogleToken(null);
     setCurrentUser(null);
+    localStorage.removeItem(CURRENT_USER_KEY);
   };
 
   const addUser = (userData: Omit<MunicipalUser, 'id'>) => {
@@ -189,6 +269,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginAsUser,
         loginWithGoogle,
         loginWithCredentials,
+        loginWithSystemPassword,
+        changeSystemPassword,
+        verifySystemPassword,
         logout,
         addUser,
         deleteUser,
