@@ -21,7 +21,8 @@ import {
   TrafficCheckpointRecord,
   MunicipalEmployee,
   CulturalStudent,
-  CulturalCourseType
+  CulturalCourseType,
+  EscuelaEmpresaStudent
 } from '../types';
 import { 
   INITIAL_DEPARTMENTS, 
@@ -39,10 +40,37 @@ import {
   INITIAL_COMMERCIAL_LICENSES,
   INITIAL_TRAFFIC_CHECKPOINTS,
   INITIAL_MUNICIPAL_EMPLOYEES,
-  INITIAL_CULTURAL_STUDENTS
+  INITIAL_CULTURAL_STUDENTS,
+  INITIAL_ESCUELA_EMPRESA_STUDENTS
 } from '../data/initialData';
 import { useAuth } from './AuthContext';
-import { ParsedMunicipalRow } from '../lib/excelUtils';
+import { ParsedMunicipalRow, ParsedWorkbookResult } from '../lib/excelUtils';
+import { syncStateToFirestore, loadStateFromFirestore } from '../lib/firestoreSync';
+
+export interface SectorImportSummary {
+  added: number;
+  updated: number;
+  duplicates: number;
+  breakdown: Record<string, number>;
+}
+
+export interface SectorWorkbookBatchItem {
+  parsed: ParsedWorkbookResult;
+  targetDepartmentId: string;
+  sourceName: string;
+  sourceType: 'GOOGLE_DRIVE' | 'EXCEL_LOCAL' | 'GOOGLE_SHEETS';
+}
+
+export interface BatchSectorImportSummary extends SectorImportSummary {
+  perFile: {
+    sourceName: string;
+    departmentId: string;
+    added: number;
+    updated: number;
+    duplicates: number;
+    warningsCount: number;
+  }[];
+}
 
 interface DepartmentKPI {
   departmentId: string;
@@ -96,7 +124,8 @@ interface MunicipalDataContextType {
   syncLogs: SyncLog[];
   auditLogs: AuditLog[];
 
-  // CRUD Departments
+  // CRUD Departments (persisted locally + synced to Firestore)
+  departmentsLastSavedAt: string | null;
   addDepartment: (dept: Omit<Department, 'id'>) => void;
   updateDepartment: (dept: Department) => void;
   deleteDepartment: (id: string) => void;
@@ -193,6 +222,21 @@ interface MunicipalDataContextType {
     folkloreCount: number;
   };
 
+  // MÓDULO ESCUELA EMPRESA (Panadería y Pastelería - Dependiente del D.E.M.)
+  escuelaEmpresaStudents: EscuelaEmpresaStudent[];
+  addEscuelaEmpresaStudent: (student: Omit<EscuelaEmpresaStudent, 'id' | 'createdAt' | 'enrollmentNumber'> & { enrollmentNumber?: string }) => EscuelaEmpresaStudent;
+  updateEscuelaEmpresaStudent: (student: EscuelaEmpresaStudent) => void;
+  deleteEscuelaEmpresaStudent: (id: string) => void;
+  escuelaEmpresaKPIs: {
+    totalStudents: number;
+    panaderiaCount: number;
+    pasteleriaCount: number;
+    ambasCount: number;
+    activeCount: number;
+    egresadosCount: number;
+    withFoodCertCount: number;
+  };
+
   // CRUD Citizens
   addCitizen: (citizen: Omit<Citizen, 'id' | 'registrationDate'>) => Citizen;
   updateCitizen: (citizen: Citizen) => void;
@@ -225,6 +269,8 @@ interface MunicipalDataContextType {
 
   // Import / Sync
   importRowsFromSpreadsheet: (rows: ParsedMunicipalRow[], targetDepartmentId: string, sourceName: string, sourceType: 'GOOGLE_DRIVE' | 'EXCEL_LOCAL' | 'GOOGLE_SHEETS') => { added: number; updated: number; duplicates: number };
+  importSectorWorkbook: (parsed: ParsedWorkbookResult, targetDepartmentId: string, sourceName: string, sourceType: 'GOOGLE_DRIVE' | 'EXCEL_LOCAL' | 'GOOGLE_SHEETS') => SectorImportSummary;
+  importMultipleSectorWorkbooks: (items: SectorWorkbookBatchItem[]) => BatchSectorImportSummary;
   addSyncLog: (log: Omit<SyncLog, 'id'>) => void;
 
   // Funds & Expenses
@@ -278,7 +324,53 @@ const STORAGE_KEYS = {
   COMMERCIAL_LICENSES: 'ita_ibate_simm_commercial_licenses',
   TRAFFIC_CHECKPOINTS: 'ita_ibate_simm_traffic_checkpoints',
   EMPLOYEES: 'ita_ibate_simm_employees',
-  CULTURAL_STUDENTS: 'ita_ibate_simm_cultural_students'
+  CULTURAL_STUDENTS: 'ita_ibate_simm_cultural_students',
+  ESCUELA_EMPRESA_STUDENTS: 'ita_ibate_simm_escuela_empresa_students',
+  DEPTS_UPDATED_AT: 'ita_ibate_simm_departments_updated_at'
+};
+
+// Non-destructive department upgrade: ALWAYS preserves user-edited Coordinators, Directors & Secretaries
+const mergeSystemDepartmentsNonDestructive = (savedList: Department[]): Department[] => {
+  if (!Array.isArray(savedList) || savedList.length === 0) {
+    return INITIAL_DEPARTMENTS;
+  }
+
+  const savedById = new Map<string, Department>(savedList.map(d => [d.id, d]));
+  const hasOrganigramaV2 = savedById.has('sec-jefatura-gabinete');
+
+  if (!hasOrganigramaV2) {
+    // Preserve any edited leader details from older schema by matching id
+    return INITIAL_DEPARTMENTS.map(initDept => {
+      const prev = savedById.get(initDept.id);
+      if (!prev) return initDept;
+      return {
+        ...initDept,
+        leaderName: prev.leaderName || initDept.leaderName,
+        leaderTitle: prev.leaderTitle || initDept.leaderTitle,
+        leaderDni: prev.leaderDni || initDept.leaderDni,
+        leaderEmail: prev.leaderEmail || initDept.leaderEmail,
+        phone: prev.phone || initDept.phone,
+        legalReference: prev.legalReference || initDept.legalReference
+      };
+    });
+  }
+
+  // Keep every saved department and all its customized authority fields intact
+  const result = savedList.map(d => {
+    if (d.id === 'dir-gen-seguridad' && d.moduleType !== 'CONTROL_URBANO') {
+      return { ...d, moduleType: 'CONTROL_URBANO' as const };
+    }
+    return d;
+  });
+
+  // Non-destructively append newly introduced system departments (e.g., escuela-empresa) if missing
+  for (const initDept of INITIAL_DEPARTMENTS) {
+    if (initDept.id === 'escuela-empresa' && !savedById.has(initDept.id)) {
+      result.push(initDept);
+    }
+  }
+
+  return result;
 };
 
 const MunicipalDataContext = createContext<MunicipalDataContextType | undefined>(undefined);
@@ -286,20 +378,18 @@ const MunicipalDataContext = createContext<MunicipalDataContextType | undefined>
 export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useAuth();
 
+  const [departmentsLastSavedAt, setDepartmentsLastSavedAt] = useState<string | null>(() => {
+    return localStorage.getItem(STORAGE_KEYS.DEPTS_UPDATED_AT);
+  });
+
   const [departments, setDepartments] = useState<Department[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.DEPTS);
     if (!saved) return INITIAL_DEPARTMENTS;
     try {
       const parsed: Department[] = JSON.parse(saved);
-      // Auto-upgrade if previous schema or missing official organigrama structure
-      const hasOrganigramaV2 = parsed.some(d => d.id === 'sec-jefatura-gabinete');
-      // Also ensure dir-gen-seguridad has moduleType CONTROL_URBANO
-      const segDept = parsed.find(d => d.id === 'dir-gen-seguridad');
-      if (!hasOrganigramaV2 || segDept?.moduleType !== 'CONTROL_URBANO') {
-        localStorage.setItem(STORAGE_KEYS.DEPTS, JSON.stringify(INITIAL_DEPARTMENTS));
-        return INITIAL_DEPARTMENTS;
-      }
-      return parsed;
+      const merged = mergeSystemDepartmentsNonDestructive(parsed);
+      localStorage.setItem(STORAGE_KEYS.DEPTS, JSON.stringify(merged));
+      return merged;
     } catch {
       return INITIAL_DEPARTMENTS;
     }
@@ -385,6 +475,11 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     return saved ? JSON.parse(saved) : INITIAL_CULTURAL_STUDENTS;
   });
 
+  const [escuelaEmpresaStudents, setEscuelaEmpresaStudents] = useState<EscuelaEmpresaStudent[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.ESCUELA_EMPRESA_STUDENTS);
+    return saved ? JSON.parse(saved) : INITIAL_ESCUELA_EMPRESA_STUDENTS;
+  });
+
   // Global filters
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>({
     start: '',
@@ -412,6 +507,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.TRAFFIC_CHECKPOINTS, JSON.stringify(trafficCheckpoints)); }, [trafficCheckpoints]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.EMPLOYEES, JSON.stringify(employees)); }, [employees]);
   useEffect(() => { localStorage.setItem(STORAGE_KEYS.CULTURAL_STUDENTS, JSON.stringify(culturalStudents)); }, [culturalStudents]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEYS.ESCUELA_EMPRESA_STUDENTS, JSON.stringify(escuelaEmpresaStudents)); }, [escuelaEmpresaStudents]);
 
   // Audit helper
   const logAudit = (action: string, entity: string, details: string, entityId?: string) => {
@@ -429,26 +525,103 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     setAuditLogs(prev => [newLog, ...prev.slice(0, 199)]);
   };
 
-  // Department Operations
+  // Hydrate custom Secretaries, Directors & Coordinators from Firestore on mount (and push newer local edits)
+  useEffect(() => {
+    let active = true;
+    loadStateFromFirestore()
+      .then(cloud => {
+        if (!active) return;
+        const localUpdatedAt = localStorage.getItem(STORAGE_KEYS.DEPTS_UPDATED_AT) || '';
+        const remoteDepartments = Array.isArray(cloud?.departments) ? (cloud.departments as Department[]) : null;
+        const remoteUpdatedAt = typeof cloud?.departmentsUpdatedAt === 'string' ? cloud.departmentsUpdatedAt : '';
+
+        if (remoteDepartments && remoteDepartments.length > 0) {
+          const shouldAdoptRemote =
+            !localUpdatedAt || (remoteUpdatedAt && remoteUpdatedAt > localUpdatedAt);
+
+          if (shouldAdoptRemote) {
+            const merged = mergeSystemDepartmentsNonDestructive(remoteDepartments);
+            setDepartments(merged);
+            try {
+              localStorage.setItem(STORAGE_KEYS.DEPTS, JSON.stringify(merged));
+              if (remoteUpdatedAt) {
+                localStorage.setItem(STORAGE_KEYS.DEPTS_UPDATED_AT, remoteUpdatedAt);
+                setDepartmentsLastSavedAt(remoteUpdatedAt);
+              }
+            } catch {
+              // ignore storage quota errors
+            }
+            return;
+          }
+        }
+
+        // If local has customized edits newer than cloud, push them to Firestore automatically
+        if (localUpdatedAt && (!remoteUpdatedAt || localUpdatedAt > remoteUpdatedAt)) {
+          const currentSaved = localStorage.getItem(STORAGE_KEYS.DEPTS);
+          if (currentSaved) {
+            try {
+              const parsedLocal = JSON.parse(currentSaved);
+              syncStateToFirestore({
+                departments: parsedLocal,
+                departmentsUpdatedAt: localUpdatedAt
+              }).catch(() => {});
+            } catch {
+              // ignore
+            }
+          }
+        }
+      })
+      .catch(() => {
+        // local persistence remains 100% active
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Helper to immediately persist department & authority edits both locally and in Firestore
+  const persistDepartmentsChange = (updater: (prev: Department[]) => Department[]) => {
+    setDepartments(prev => {
+      const next = updater(prev);
+      const nowIso = new Date().toISOString();
+      try {
+        localStorage.setItem(STORAGE_KEYS.DEPTS, JSON.stringify(next));
+        localStorage.setItem(STORAGE_KEYS.DEPTS_UPDATED_AT, nowIso);
+      } catch {
+        // ignore storage quota errors
+      }
+      setDepartmentsLastSavedAt(nowIso);
+      syncStateToFirestore({
+        departments: next,
+        departmentsUpdatedAt: nowIso
+      }).catch(() => {
+        // non-blocking cloud backup
+      });
+      return next;
+    });
+  };
+
+  // Department Operations (all changes saved permanently locally + cloud)
   const addDepartment = (deptData: Omit<Department, 'id'>) => {
     const id = `dept-${Date.now()}`;
     const newDept: Department = { ...deptData, id };
-    setDepartments(prev => [...prev, newDept]);
+    persistDepartmentsChange(prev => [...prev, newDept]);
     logAudit('CREACION', 'AREA_MUNICIPAL', `Se creó el área: ${newDept.name}`, id);
   };
 
   const updateDepartment = (dept: Department) => {
-    setDepartments(prev => prev.map(d => d.id === dept.id ? dept : d));
-    logAudit('MODIFICACION', 'AREA_MUNICIPAL', `Se actualizó el área: ${dept.name}`, dept.id);
+    persistDepartmentsChange(prev => prev.map(d => d.id === dept.id ? dept : d));
+    logAudit('MODIFICACION', 'AREA_MUNICIPAL', `Se actualizó el área y sus autoridades: ${dept.name}`, dept.id);
   };
 
   const deleteDepartment = (id: string) => {
     const dept = departments.find(d => d.id === id);
-    setDepartments(prev => prev.filter(d => d.id !== id));
+    persistDepartmentsChange(prev => prev.filter(d => d.id !== id));
     logAudit('ELIMINACION', 'AREA_MUNICIPAL', `Se eliminó el área: ${dept?.name || id}`, id);
   };
 
-  // Permite colocar/editar en cada secretaría, dirección y coordinación quién está a cargo
+  // Permite colocar/editar en cada secretaría, dirección y coordinación quién está a cargo (guardado permanente)
   const updateDepartmentLeader = (
     departmentId: string, 
     leaderData: { 
@@ -460,7 +633,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
       legalReference?: string;
     }
   ) => {
-    setDepartments(prev => prev.map(d => {
+    persistDepartmentsChange(prev => prev.map(d => {
       if (d.id === departmentId) {
         return {
           ...d,
@@ -777,6 +950,98 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
       folkloreCount
     };
   }, [culturalStudents]);
+
+  // ==========================================
+  // OPERACIONES DE ESCUELA EMPRESA (Dependiente del D.E.M.)
+  // Panadería y Pastelería
+  // ==========================================
+  const addEscuelaEmpresaStudent = (
+    data: Omit<EscuelaEmpresaStudent, 'id' | 'createdAt' | 'enrollmentNumber'> & { enrollmentNumber?: string }
+  ): EscuelaEmpresaStudent => {
+    const id = `ee-${Date.now()}`;
+    const nextNum = escuelaEmpresaStudents.length + 1;
+    const enrollmentNumber =
+      data.enrollmentNumber && data.enrollmentNumber.trim() !== ''
+        ? data.enrollmentNumber.trim()
+        : `EE-2026-${String(nextNum).padStart(3, '0')}`;
+    const newStudent: EscuelaEmpresaStudent = {
+      ...data,
+      id,
+      enrollmentNumber,
+      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16)
+    };
+    setEscuelaEmpresaStudents(prev => [newStudent, ...prev]);
+
+    // Ensure citizen record exists in municipal registry
+    const cleanDni = data.dni.replace(/[^0-9]/g, '');
+    const existsCit = cleanDni
+      ? citizens.some(c => c.dni.replace(/[^0-9]/g, '') === cleanDni)
+      : false;
+    if (!existsCit && data.dni.trim()) {
+      const newCit: Citizen = {
+        id: `cit-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        dni: data.dni,
+        fullName: data.fullName,
+        address: data.address || 'Itá Ibaté',
+        neighborhood: data.neighborhood || 'Medalla Milagrosa',
+        phone: data.phone || '',
+        birthDate: data.birthDate,
+        registrationDate: data.enrollmentDate || new Date().toISOString().split('T')[0],
+        departmentRegisteredId: 'escuela-empresa',
+        notes: `Alumno Escuela Empresa (${data.specialty})`
+      };
+      setCitizens(prev => [newCit, ...prev]);
+    }
+
+    logAudit(
+      'INSCRIPCION_ESCUELA_EMPRESA',
+      'ESCUELA_EMPRESA',
+      `Nueva inscripción en Escuela Empresa (DEM): ${newStudent.fullName} · ${newStudent.specialty} (${enrollmentNumber})`,
+      id
+    );
+    return newStudent;
+  };
+
+  const updateEscuelaEmpresaStudent = (student: EscuelaEmpresaStudent) => {
+    setEscuelaEmpresaStudents(prev => prev.map(s => (s.id === student.id ? student : s)));
+    logAudit(
+      'ACTUALIZACION_ESCUELA_EMPRESA',
+      'ESCUELA_EMPRESA',
+      `Actualización de matrícula Escuela Empresa: ${student.fullName} (${student.enrollmentNumber})`,
+      student.id
+    );
+  };
+
+  const deleteEscuelaEmpresaStudent = (id: string) => {
+    const target = escuelaEmpresaStudents.find(s => s.id === id);
+    setEscuelaEmpresaStudents(prev => prev.filter(s => s.id !== id));
+    logAudit(
+      'BAJA_ESCUELA_EMPRESA',
+      'ESCUELA_EMPRESA',
+      `Baja de alumno de Escuela Empresa: ${target?.fullName || id}`,
+      id
+    );
+  };
+
+  const escuelaEmpresaKPIs = useMemo(() => {
+    const totalStudents = escuelaEmpresaStudents.length;
+    const panaderiaCount = escuelaEmpresaStudents.filter(s => s.specialty === 'PANADERIA').length;
+    const pasteleriaCount = escuelaEmpresaStudents.filter(s => s.specialty === 'PASTELERIA').length;
+    const ambasCount = escuelaEmpresaStudents.filter(s => s.specialty === 'PANADERIA_Y_PASTELERIA').length;
+    const activeCount = escuelaEmpresaStudents.filter(s => s.status === 'ACTIVO' || s.status === 'REGULAR').length;
+    const egresadosCount = escuelaEmpresaStudents.filter(s => s.status === 'EGRESADO').length;
+    const withFoodCertCount = escuelaEmpresaStudents.filter(s => s.hasFoodHandlingCert).length;
+
+    return {
+      totalStudents,
+      panaderiaCount,
+      pasteleriaCount,
+      ambasCount,
+      activeCount,
+      egresadosCount,
+      withFoodCertCount
+    };
+  }, [escuelaEmpresaStudents]);
 
   // Citizen Operations
   const findCitizenByDni = (dni: string) => {
@@ -1130,6 +1395,587 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     return { added, updated, duplicates };
   };
 
+  const importMultipleSectorWorkbooks = (items: SectorWorkbookBatchItem[]): BatchSectorImportSummary => {
+    let totalAdded = 0;
+    let totalUpdated = 0;
+    let totalDuplicates = 0;
+    const totalBreakdown: Record<string, number> = {};
+    const perFile: BatchSectorImportSummary['perFile'] = [];
+    const syncLogsToAdd: SyncLog[] = [];
+
+    const nowTimeStr = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const cleanNum = (s?: string) => (s || '').replace(/[^0-9]/g, '');
+
+    const citizensToAdd: Citizen[] = [];
+    const eventsToAdd: SportEvent[] = [];
+    const participantsToAdd: SportParticipant[] = [];
+    const participantsTutorUpdates = new Map<string, Partial<SportParticipant>>();
+    const cultureToAdd: CulturalStudent[] = [];
+    const cultureTutorUpdates = new Map<string, Partial<CulturalStudent>>();
+    const employeesToAdd: MunicipalEmployee[] = [];
+    const licensesToAdd: DriversLicenseRecord[] = [];
+    const finesToAdd: TrafficFineRecord[] = [];
+    const commercialToAdd: CommercialLicenseRecord[] = [];
+    const checkpointsToAdd: TrafficCheckpointRecord[] = [];
+    const necroToAdd: NecrologicalRecord[] = [];
+    const escuelaEmpresaToAdd: EscuelaEmpresaStudent[] = [];
+    const ticketsToAdd: Ticket[] = [];
+    const ticketStatusUpdates: { id: string; sourceName: string }[] = [];
+
+    let runningCultCount = culturalStudents.length;
+    let runningEmpCount = employees.length;
+    let runningLicCount = driversLicenses.length;
+    let runningFineCount = trafficFines.length;
+    let runningCommCount = commercialLicenses.length;
+    let runningChkCount = trafficCheckpoints.length;
+    let runningNecroCount = necrologicalRecords.length;
+    let runningEECount = escuelaEmpresaStudents.length;
+    let runningTicketCount = tickets.length;
+
+    items.forEach(({ parsed, targetDepartmentId, sourceName, sourceType }) => {
+      let added = 0;
+      let updated = 0;
+      let duplicates = 0;
+      const breakdown: Record<string, number> = {};
+      const incBreakdown = (label: string) => {
+        breakdown[label] = (breakdown[label] || 0) + 1;
+        totalBreakdown[label] = (totalBreakdown[label] || 0) + 1;
+      };
+
+      const ensureCitizen = (
+        dni: string,
+        fullName: string,
+        opts?: { phone?: string; address?: string; neighborhood?: string; deptId?: string; date?: string; notes?: string }
+      ): Citizen => {
+        const targetClean = cleanNum(dni);
+        const existing =
+          (targetClean
+            ? [...citizens, ...citizensToAdd].find(c => cleanNum(c.dni) === targetClean)
+            : undefined) ||
+          [...citizens, ...citizensToAdd].find(c => c.fullName.toLowerCase() === fullName.toLowerCase() && c.dni === dni);
+
+        if (existing) return existing;
+
+        const newCit: Citizen = {
+          id: `cit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          dni: dni || 'S/D',
+          fullName: fullName || 'Ciudadano',
+          address: opts?.address || '',
+          neighborhood: opts?.neighborhood || 'Medalla Milagrosa',
+          phone: opts?.phone || '',
+          registrationDate: opts?.date || todayStr,
+          departmentRegisteredId: opts?.deptId || targetDepartmentId,
+          notes: opts?.notes
+        };
+        citizensToAdd.push(newCit);
+        return newCit;
+      };
+
+      // 1. SPORTS
+      parsed.sportRows.forEach(r => {
+        const existingEvt = [...sportsEvents, ...eventsToAdd].find(
+          e => e.name.toLowerCase() === r.eventName.toLowerCase()
+        );
+        let eventId = existingEvt?.id;
+        if (!eventId) {
+          const newEvt: SportEvent = {
+            id: `evt-imp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            name: r.eventName,
+            discipline: r.discipline,
+            date: r.participationDate || todayStr,
+            location: r.location || 'Polideportivo Municipal de Itá Ibaté',
+            category: r.category || 'Libre',
+            status: 'EN_CURSO',
+            organizer: 'Dirección de Deportes - Municipalidad de Itá Ibaté'
+          };
+          eventsToAdd.push(newEvt);
+          eventId = newEvt.id;
+        }
+
+        ensureCitizen(r.dni, r.fullName, {
+          phone: r.phone || r.tutorPhone,
+          address: r.address,
+          neighborhood: r.neighborhood,
+          deptId: 'dir-deportes',
+          date: r.participationDate,
+          notes: `Deportista (${r.discipline})`
+        });
+
+        const rDniClean = cleanNum(r.dni);
+        const dup = [...sportsParticipants, ...participantsToAdd].find(p => {
+          const sameDni = rDniClean ? cleanNum(p.dni) === rDniClean : p.fullName.toLowerCase() === r.fullName.toLowerCase();
+          return (
+            sameDni &&
+            p.eventName.toLowerCase() === r.eventName.toLowerCase() &&
+            p.participationDate === r.participationDate
+          );
+        });
+
+        if (dup) {
+          if (r.isMinor && r.tutorName && !dup.tutorName && !participantsToAdd.includes(dup)) {
+            participantsTutorUpdates.set(dup.id, {
+              isMinor: true,
+              age: r.age ?? dup.age,
+              tutorName: r.tutorName,
+              tutorDni: r.tutorDni,
+              tutorPhone: r.tutorPhone,
+              tutorRelationship: r.tutorRelationship
+            });
+            updated++;
+          } else {
+            duplicates++;
+          }
+          return;
+        }
+
+        participantsToAdd.push({
+          id: `sp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          eventId,
+          eventName: r.eventName,
+          fullName: r.fullName,
+          dni: r.dni,
+          address: r.address,
+          neighborhood: r.neighborhood,
+          phone: r.phone,
+          discipline: r.discipline,
+          category: r.category,
+          teamOrClub: r.teamOrClub,
+          participationDate: r.participationDate,
+          location: r.location,
+          isMinor: r.isMinor,
+          age: r.age,
+          tutorName: r.tutorName,
+          tutorDni: r.tutorDni,
+          tutorPhone: r.tutorPhone,
+          tutorRelationship: r.tutorRelationship
+        });
+        added++;
+        incBreakdown('Deportes');
+      });
+
+      // 2. CULTURE
+      parsed.cultureRows.forEach(r => {
+        const rDniClean = cleanNum(r.dni);
+        const dup = [...culturalStudents, ...cultureToAdd].find(s => {
+          const sameDni = rDniClean ? cleanNum(s.dni) === rDniClean : s.fullName.toLowerCase() === r.fullName.toLowerCase();
+          return sameDni && s.course === r.course;
+        });
+
+        if (dup) {
+          if (r.isMinor && r.tutorName && !dup.tutorName && !cultureToAdd.includes(dup)) {
+            cultureTutorUpdates.set(dup.id, {
+              isMinor: true,
+              age: r.age ?? dup.age,
+              tutorName: r.tutorName,
+              tutorDni: r.tutorDni,
+              tutorPhone: r.tutorPhone,
+              tutorRelationship: r.tutorRelationship
+            });
+            updated++;
+          } else {
+            duplicates++;
+          }
+          return;
+        }
+
+        runningCultCount++;
+        cultureToAdd.push({
+          id: `cult-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          enrollmentNumber: `CULT-2026-${String(runningCultCount).padStart(3, '0')}`,
+          fullName: r.fullName,
+          dni: r.dni,
+          age: r.age,
+          isMinor: r.isMinor,
+          phone: r.phone,
+          address: r.address,
+          neighborhood: r.neighborhood,
+          course: r.course,
+          shift: r.shift,
+          teacherName: r.teacherName,
+          enrollmentDate: r.enrollmentDate,
+          status: 'ACTIVO',
+          tutorName: r.tutorName,
+          tutorDni: r.tutorDni,
+          tutorPhone: r.tutorPhone,
+          tutorRelationship: r.tutorRelationship,
+          notes: r.notes,
+          createdAt: nowTimeStr
+        });
+        added++;
+        incBreakdown('Cultura');
+      });
+
+      // 3. RRHH
+      parsed.employeeRows.forEach(r => {
+        const rDniClean = cleanNum(r.dni);
+        const dup = [...employees, ...employeesToAdd].find(e => {
+          if (r.fileNumber && e.fileNumber.toLowerCase() === r.fileNumber.toLowerCase()) return true;
+          if (rDniClean && cleanNum(e.dni) === rDniClean) return true;
+          return false;
+        });
+        if (dup) {
+          duplicates++;
+          return;
+        }
+
+        const deptQuery = (r.departmentNameOrId || '').toLowerCase();
+        const matchedDept =
+          departments.find(
+            d =>
+              d.id.toLowerCase() === deptQuery ||
+              d.name.toLowerCase() === deptQuery ||
+              (deptQuery && (d.name.toLowerCase().includes(deptQuery) || d.shortName.toLowerCase().includes(deptQuery)))
+          ) ||
+          departments.find(d => d.id === targetDepartmentId) ||
+          departments[0];
+
+        runningEmpCount++;
+        employeesToAdd.push({
+          id: `emp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          fileNumber: r.fileNumber || `LEG-${String(runningEmpCount).padStart(5, '0')}`,
+          fullName: r.fullName,
+          dni: r.dni,
+          cuil: r.cuil,
+          nationality: 'Argentina',
+          employmentCondition: r.employmentCondition,
+          departmentId: matchedDept?.id || targetDepartmentId,
+          position: r.position,
+          categoryOrScale: r.categoryOrScale,
+          entryDate: r.entryDate,
+          phone: r.phone,
+          address: r.address,
+          neighborhood: r.neighborhood,
+          workShift: r.workShift || 'MANANA',
+          hoursPerWeek: r.hoursPerWeek || 30,
+          status: 'ACTIVO',
+          socialSecurityNumber: r.socialSecurityNumber,
+          emergencyContactName: r.emergencyContactName,
+          emergencyContactPhone: r.emergencyContactPhone,
+          notes: r.notes,
+          createdAt: nowTimeStr
+        });
+        added++;
+        incBreakdown('RRHH');
+      });
+
+      // 4. CONTROL URBANO - CARNETS
+      parsed.licenseRows.forEach(r => {
+        const rDniClean = cleanNum(r.citizenDni);
+        const dup = [...driversLicenses, ...licensesToAdd].find(l => {
+          if (r.licenseNumber && l.licenseNumber.toLowerCase() === r.licenseNumber.toLowerCase()) return true;
+          return rDniClean && cleanNum(l.citizenDni) === rDniClean && l.issueDate === r.issueDate;
+        });
+        if (dup) {
+          duplicates++;
+          return;
+        }
+        runningLicCount++;
+        licensesToAdd.push({
+          ...r,
+          id: `lic-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          recordNumber: `CARNET-2026-${String(runningLicCount).padStart(4, '0')}`,
+          createdAt: nowTimeStr
+        });
+        added++;
+        incBreakdown('Carnets de Conducir');
+      });
+
+      // 5. CONTROL URBANO - MULTAS
+      parsed.fineRows.forEach(r => {
+        const dup = [...trafficFines, ...finesToAdd].find(
+          f => f.actNumber.toLowerCase() === r.actNumber.toLowerCase()
+        );
+        if (dup) {
+          duplicates++;
+          return;
+        }
+        runningFineCount++;
+        finesToAdd.push({
+          ...r,
+          id: `fine-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          fineNumber: `MULTA-2026-${String(runningFineCount).padStart(4, '0')}`,
+          createdAt: nowTimeStr
+        });
+        added++;
+        incBreakdown('Multas de Tránsito');
+      });
+
+      // 6. CONTROL URBANO - HABILITACIONES
+      parsed.commercialRows.forEach(r => {
+        const dup = [...commercialLicenses, ...commercialToAdd].find(
+          c =>
+            c.expedientNumber.toLowerCase() === r.expedientNumber.toLowerCase() &&
+            c.businessName.toLowerCase() === r.businessName.toLowerCase()
+        );
+        if (dup) {
+          duplicates++;
+          return;
+        }
+        runningCommCount++;
+        commercialToAdd.push({
+          ...r,
+          id: `hab-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          recordNumber: `HAB-2026-${String(runningCommCount).padStart(4, '0')}`,
+          createdAt: nowTimeStr
+        });
+        added++;
+        incBreakdown('Habilitaciones');
+      });
+
+      // 7. CONTROL URBANO - OPERATIVOS
+      parsed.checkpointRows.forEach(r => {
+        const dup = [...trafficCheckpoints, ...checkpointsToAdd].find(
+          c =>
+            c.date === r.date &&
+            c.location.toLowerCase() === r.location.toLowerCase() &&
+            c.shift === r.shift
+        );
+        if (dup) {
+          duplicates++;
+          return;
+        }
+        runningChkCount++;
+        checkpointsToAdd.push({
+          ...r,
+          id: `chk-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          checkpointCode: `OP-2026-${String(runningChkCount).padStart(4, '0')}`,
+          createdAt: nowTimeStr
+        });
+        added++;
+        incBreakdown('Operativos Viales');
+      });
+
+      // 8. NECROLOGICAL
+      parsed.necrologicalRows.forEach(r => {
+        const rDniClean = cleanNum(r.deceasedDni);
+        const dup = [...necrologicalRecords, ...necroToAdd].find(n => {
+          const sameDni = rDniClean ? cleanNum(n.deceasedDni) === rDniClean : n.deceasedFullName.toLowerCase() === r.deceasedFullName.toLowerCase();
+          return sameDni && n.deathDate === r.deathDate;
+        });
+        if (dup) {
+          duplicates++;
+          return;
+        }
+        runningNecroCount++;
+        necroToAdd.push({
+          ...r,
+          id: `nec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          actNumber: `ACT-NEC-2026-${String(runningNecroCount).padStart(4, '0')}`,
+          createdAt: nowTimeStr
+        });
+        added++;
+        incBreakdown('Registro Necrológico');
+      });
+
+      // 8b. ESCUELA EMPRESA (Panadería y Pastelería - D.E.M.)
+      (parsed.escuelaEmpresaRows || []).forEach(r => {
+        ensureCitizen(r.dni, r.fullName, {
+          phone: r.phone,
+          address: r.address,
+          neighborhood: r.neighborhood,
+          deptId: 'escuela-empresa',
+          date: r.enrollmentDate,
+          notes: `Alumno Escuela Empresa (${r.specialty})`
+        });
+
+        const rDniClean = cleanNum(r.dni);
+        const dup = [...escuelaEmpresaStudents, ...escuelaEmpresaToAdd].find(s => {
+          const sameDni = rDniClean ? cleanNum(s.dni) === rDniClean : s.fullName.toLowerCase() === r.fullName.toLowerCase();
+          return sameDni && s.specialty === r.specialty;
+        });
+
+        if (dup) {
+          duplicates++;
+          return;
+        }
+
+        runningEECount++;
+        escuelaEmpresaToAdd.push({
+          id: `ee-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          enrollmentNumber: `EE-2026-${String(runningEECount).padStart(3, '0')}`,
+          fullName: r.fullName,
+          dni: r.dni,
+          age: r.age,
+          phone: r.phone,
+          email: r.email,
+          address: r.address,
+          neighborhood: r.neighborhood,
+          specialty: r.specialty,
+          shift: r.shift,
+          level: r.level,
+          instructorName: r.instructorName,
+          hasFoodHandlingCert: r.hasFoodHandlingCert,
+          enrollmentDate: r.enrollmentDate,
+          status: r.status,
+          notes: r.notes,
+          createdAt: nowTimeStr
+        });
+        added++;
+        incBreakdown('Escuela Empresa');
+      });
+
+      // 9. TICKETS
+      parsed.ticketRows.forEach(r => {
+        const cit = ensureCitizen(r.dni, r.fullName, {
+          phone: r.phone,
+          address: r.address,
+          neighborhood: r.neighborhood,
+          deptId: targetDepartmentId,
+          date: r.startDate,
+          notes: r.notes
+        });
+
+        const rDniClean = cleanNum(r.dni);
+        const existingTicket = [...tickets, ...ticketsToAdd].find(t => {
+          const sameDni = rDniClean ? cleanNum(t.citizenDni) === rDniClean : t.citizenName.toLowerCase() === r.fullName.toLowerCase();
+          return (
+            sameDni &&
+            t.requestType.toLowerCase() === r.requestType.toLowerCase() &&
+            t.startDate === (r.startDate || todayStr)
+          );
+        });
+
+        if (existingTicket) {
+          if (r.isResolved && !existingTicket.isResolved && !ticketsToAdd.includes(existingTicket)) {
+            ticketStatusUpdates.push({ id: existingTicket.id, sourceName });
+            updated++;
+          } else {
+            duplicates++;
+          }
+          return;
+        }
+
+        runningTicketCount++;
+        const ticketCode = `TR-${new Date().getFullYear()}-${String(runningTicketCount).padStart(4, '0')}`;
+        const isResolved = !!r.isResolved;
+        const statusVal: TicketStatus = (r.status?.toUpperCase() as TicketStatus) || (isResolved ? 'SOLUCIONADO' : 'INICIADO');
+
+        ticketsToAdd.push({
+          id: `tk-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          ticketCode,
+          citizenId: cit.id,
+          citizenName: cit.fullName,
+          citizenDni: cit.dni,
+          citizenPhone: cit.phone,
+          citizenNeighborhood: cit.neighborhood,
+          departmentId: targetDepartmentId,
+          originalDepartmentId: targetDepartmentId,
+          requestType: r.requestType,
+          description: r.description,
+          startDate: r.startDate || todayStr,
+          resolvedDate: isResolved ? (r.resolvedDate || r.startDate || todayStr) : undefined,
+          responsibleName: r.responsibleName || 'Operador de Planilla',
+          status: statusVal,
+          isResolved,
+          priority: 'MEDIA',
+          areaSpecificData: r.areaSpecificData || {},
+          timeline: [
+            {
+              id: `tl-imp-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+              date: nowTimeStr,
+              authorName: `Sincronización (${sourceName})`,
+              departmentId: targetDepartmentId,
+              newStatus: statusVal,
+              comment: r.notes ? `Importado: ${r.notes}` : 'Registro importado desde planilla municipal.',
+              actionType: isResolved ? 'RESOLUCION' : 'CREACION'
+            }
+          ]
+        });
+        added++;
+        incBreakdown('Trámites / Atenciones');
+      });
+
+      totalAdded += added;
+      totalUpdated += updated;
+      totalDuplicates += duplicates;
+
+      const totalProcessed = parsed.totalDetected;
+      syncLogsToAdd.push({
+        id: `sync-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+        date: nowTimeStr,
+        source: sourceType,
+        fileName: sourceName,
+        departmentId: targetDepartmentId,
+        recordsProcessed: totalProcessed,
+        recordsAdded: added,
+        recordsUpdated: updated,
+        duplicatesSkipped: duplicates,
+        errorsCount: parsed.warnings.length,
+        status: 'EXITOSO',
+        details: `Procesados ${totalProcessed} registros (${Object.entries(breakdown).map(([k, v]) => `${k}: +${v}`).join(', ') || 'sin novedades'}).`
+      });
+
+      perFile.push({
+        sourceName,
+        departmentId: targetDepartmentId,
+        added,
+        updated,
+        duplicates,
+        warningsCount: parsed.warnings.length
+      });
+    });
+
+    // Apply all batched state updates once cleanly
+    if (citizensToAdd.length > 0) setCitizens(prev => [...citizensToAdd, ...prev]);
+    if (eventsToAdd.length > 0) setSportsEvents(prev => [...eventsToAdd, ...prev]);
+    if (participantsToAdd.length > 0 || participantsTutorUpdates.size > 0) {
+      setSportsParticipants(prev => [
+        ...participantsToAdd,
+        ...prev.map(p => (participantsTutorUpdates.has(p.id) ? { ...p, ...participantsTutorUpdates.get(p.id)! } : p))
+      ]);
+    }
+    if (cultureToAdd.length > 0 || cultureTutorUpdates.size > 0) {
+      setCulturalStudents(prev => [
+        ...cultureToAdd,
+        ...prev.map(s => (cultureTutorUpdates.has(s.id) ? { ...s, ...cultureTutorUpdates.get(s.id)! } : s))
+      ]);
+    }
+    if (employeesToAdd.length > 0) setEmployees(prev => [...employeesToAdd, ...prev]);
+    if (licensesToAdd.length > 0) setDriversLicenses(prev => [...licensesToAdd, ...prev]);
+    if (finesToAdd.length > 0) setTrafficFines(prev => [...finesToAdd, ...prev]);
+    if (commercialToAdd.length > 0) setCommercialLicenses(prev => [...commercialToAdd, ...prev]);
+    if (checkpointsToAdd.length > 0) setTrafficCheckpoints(prev => [...checkpointsToAdd, ...prev]);
+    if (necroToAdd.length > 0) setNecrologicalRecords(prev => [...necroToAdd, ...prev]);
+    if (escuelaEmpresaToAdd.length > 0) setEscuelaEmpresaStudents(prev => [...escuelaEmpresaToAdd, ...prev]);
+    if (ticketsToAdd.length > 0) setTickets(prev => [...ticketsToAdd, ...prev]);
+    ticketStatusUpdates.forEach(item => {
+      updateTicketStatus(item.id, 'SOLUCIONADO', `Actualizado desde sincronización (${item.sourceName})`);
+    });
+    if (syncLogsToAdd.length > 0) setSyncLogs(prev => [...syncLogsToAdd, ...prev]);
+
+    logAudit(
+      'IMPORTACION_MASIVA',
+      'PLANILLA_SECTORIAL',
+      `Sincronizados ${items.length} archivo(s) (+${totalAdded} nuevos, ${totalUpdated} actualizados, ${totalDuplicates} duplicados)`
+    );
+
+    return {
+      added: totalAdded,
+      updated: totalUpdated,
+      duplicates: totalDuplicates,
+      breakdown: totalBreakdown,
+      perFile
+    };
+  };
+
+  const importSectorWorkbook = (
+    parsed: ParsedWorkbookResult,
+    targetDepartmentId: string,
+    sourceName: string,
+    sourceType: 'GOOGLE_DRIVE' | 'EXCEL_LOCAL' | 'GOOGLE_SHEETS'
+  ): SectorImportSummary => {
+    const res = importMultipleSectorWorkbooks([
+      { parsed, targetDepartmentId, sourceName, sourceType }
+    ]);
+    return {
+      added: res.added,
+      updated: res.updated,
+      duplicates: res.duplicates,
+      breakdown: res.breakdown
+    };
+  };
+
   const addSyncLog = (logData: Omit<SyncLog, 'id'>) => {
     const newLog: SyncLog = {
       ...logData,
@@ -1305,7 +2151,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const resetAllData = () => {
-    setDepartments(INITIAL_DEPARTMENTS);
+    // Preserves ALL customized Secretaries, Directors & Coordinators in `departments`
     setNecrologicalRecords(INITIAL_NECROLOGICAL_RECORDS);
     setDriversLicenses(INITIAL_DRIVERS_LICENSES);
     setTrafficFines(INITIAL_TRAFFIC_FINES);
@@ -1321,8 +2167,8 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     setExpenseCategories(DEFAULT_EXPENSE_CATEGORIES);
     setEmployees(INITIAL_MUNICIPAL_EMPLOYEES);
     setCulturalStudents(INITIAL_CULTURAL_STUDENTS);
+    setEscuelaEmpresaStudents(INITIAL_ESCUELA_EMPRESA_STUDENTS);
     setAuditLogs([]);
-    localStorage.removeItem(STORAGE_KEYS.DEPTS);
     localStorage.removeItem(STORAGE_KEYS.NECROLOGICAL);
     localStorage.removeItem(STORAGE_KEYS.DRIVERS_LICENSES);
     localStorage.removeItem(STORAGE_KEYS.TRAFFIC_FINES);
@@ -1330,6 +2176,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     localStorage.removeItem(STORAGE_KEYS.TRAFFIC_CHECKPOINTS);
     localStorage.removeItem(STORAGE_KEYS.EMPLOYEES);
     localStorage.removeItem(STORAGE_KEYS.CULTURAL_STUDENTS);
+    localStorage.removeItem(STORAGE_KEYS.ESCUELA_EMPRESA_STUDENTS);
     localStorage.removeItem(STORAGE_KEYS.CITIZENS);
     localStorage.removeItem(STORAGE_KEYS.TICKETS);
     localStorage.removeItem(STORAGE_KEYS.SPORTS_EVENTS);
@@ -1356,6 +2203,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     setTrafficCheckpoints([]);
     setEmployees([]);
     setCulturalStudents([]);
+    setEscuelaEmpresaStudents([]);
     setSyncLogs([]);
     
     localStorage.setItem(STORAGE_KEYS.CITIZENS, JSON.stringify([]));
@@ -1371,6 +2219,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     localStorage.setItem(STORAGE_KEYS.TRAFFIC_CHECKPOINTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.EMPLOYEES, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.CULTURAL_STUDENTS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.ESCUELA_EMPRESA_STUDENTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.SYNC_LOGS, JSON.stringify([]));
 
     logAudit('LIMPIEZA_SISTEMA', 'CONFIGURACION', 'Se purgaron todos los datos de prueba y demostración. El sistema inicia en producción.');
@@ -1664,6 +2513,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         expenseCategories,
         financialKPIs,
         departmentBalances,
+        departmentsLastSavedAt,
         addDepartment,
         updateDepartment,
         deleteDepartment,
@@ -1700,6 +2550,11 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         updateCulturalStudent,
         deleteCulturalStudent,
         culturalKPIs,
+        escuelaEmpresaStudents,
+        addEscuelaEmpresaStudent,
+        updateEscuelaEmpresaStudent,
+        deleteEscuelaEmpresaStudent,
+        escuelaEmpresaKPIs,
         addCitizen,
         updateCitizen,
         findCitizenByDni,
@@ -1711,6 +2566,8 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         updateSportEvent,
         addSportParticipant,
         importRowsFromSpreadsheet,
+        importSectorWorkbook,
+        importMultipleSectorWorkbooks,
         addSyncLog,
         addFundAllocation,
         updateFundAllocation,

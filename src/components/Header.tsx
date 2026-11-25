@@ -1,26 +1,21 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useMunicipalData } from '../context/MunicipalDataContext';
-import { 
-  Building2, 
-  ShieldCheck, 
-  Eye, 
-  EyeOff, 
-  AlertTriangle, 
-  Clock, 
-  LogOut, 
-  UserCheck, 
-  FileSpreadsheet, 
+import {
+  ShieldCheck,
+  Eye,
+  EyeOff,
+  AlertTriangle,
+  Clock,
+  LogOut,
+  FileSpreadsheet,
   ChevronDown,
-  RefreshCw,
-  Sparkles,
   KeyRound,
-  Database,
   X
 } from 'lucide-react';
 
-export const Header: React.FC<{ 
-  onNavigateToTickets?: () => void; 
+export const Header: React.FC<{
+  onNavigateToTickets?: () => void;
   onNavigateToDrive?: () => void;
   onNavigateToFunds?: () => void;
 }> = ({
@@ -28,29 +23,30 @@ export const Header: React.FC<{
   onNavigateToDrive,
   onNavigateToFunds
 }) => {
-  const { 
-    currentUser, 
-    users, 
-    loginAsUser, 
-    logout, 
-    loginWithGoogle, 
-    googleToken, 
-    maskSensitiveData, 
+  const {
+    currentUser,
+    adminUsername,
+    isUsingDefaultPassword,
+    logout,
+    googleToken,
+    maskSensitiveData,
     toggleMaskSensitiveData,
-    changeSystemPassword 
+    changeSystemPassword
   } = useAuth();
-  
-  const { kpis, departmentKPIs, financialKPIs, resetAllData } = useMunicipalData();
+
+  const { kpis, departmentKPIs, financialKPIs } = useMunicipalData();
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [showRoleSwitcher, setShowRoleSwitcher] = useState(false);
+  const [dismissedDefaultPassBanner, setDismissedDefaultPassBanner] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [usernameInput, setUsernameInput] = useState(adminUsername);
   const [currentPassInput, setCurrentPassInput] = useState('');
   const [newPassInput, setNewPassInput] = useState('');
   const [confirmPassInput, setConfirmPassInput] = useState('');
   const [passError, setPassError] = useState<string | null>(null);
   const [passSuccess, setPassSuccess] = useState(false);
+  const [isSavingPass, setIsSavingPass] = useState(false);
 
-  const inactiveDepts = departmentKPIs.filter(d => d.isInactiveWarning);
+  const inactiveDepts = departmentKPIs.filter((d) => d.isInactiveWarning);
 
   const formattedDate = new Intl.DateTimeFormat('es-AR', {
     weekday: 'long',
@@ -59,10 +55,51 @@ export const Header: React.FC<{
     year: 'numeric'
   }).format(new Date());
 
-  const hasFinancialAlerts = (financialKPIs?.totalSettlementObserved > 0) || (financialKPIs?.departmentsWithLowBalance > 0);
+  const hasFinancialAlerts =
+    financialKPIs?.totalSettlementObserved > 0 || financialKPIs?.departmentsWithLowBalance > 0;
+
+  const openPasswordModal = () => {
+    setShowUserMenu(false);
+    setUsernameInput(adminUsername);
+    setCurrentPassInput('');
+    setNewPassInput('');
+    setConfirmPassInput('');
+    setPassError(null);
+    setPassSuccess(false);
+    setShowPasswordModal(true);
+  };
 
   return (
     <header className="bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-40 shadow-md">
+      {/* Prompt to change initial default password whenever the Admin wishes */}
+      {isUsingDefaultPassword && !dismissedDefaultPassBanner && (
+        <div className="bg-sky-950/90 border-b border-sky-500/40 px-4 py-1.5 text-xs text-sky-100 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <KeyRound className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+            <span>
+              Está ingresando con la <strong>contraseña inicial</strong>. Puede cambiar su usuario y contraseña cuando lo desee.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={openPasswordModal}
+              className="px-2.5 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded-md font-semibold text-[11px] transition cursor-pointer"
+            >
+              Cambiar Contraseña Ahora
+            </button>
+            <button
+              type="button"
+              onClick={() => setDismissedDefaultPassBanner(true)}
+              className="text-sky-300/80 hover:text-white cursor-pointer"
+              title="Ocultar aviso en esta sesión"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top emergency / alert banner if delayed tickets, inactive areas, or financial alerts exist */}
       {(kpis.criticalDelayedTicketsCount > 0 || inactiveDepts.length > 0 || hasFinancialAlerts) && (
         <div className="bg-amber-950/90 border-b border-amber-600/50 px-4 py-1.5 text-xs text-amber-200 flex flex-wrap items-center justify-between gap-2">
@@ -72,11 +109,11 @@ export const Header: React.FC<{
               Alerta de Gestión:
             </span>
             {kpis.criticalDelayedTicketsCount > 0 && (
-              <button 
+              <button
                 onClick={onNavigateToTickets}
                 className="hover:underline text-amber-300 font-medium cursor-pointer"
               >
-                ⚠️ {kpis.criticalDelayedTicketsCount} trámite(s) con más de 15 días sin resolución.
+                {kpis.criticalDelayedTicketsCount} trámite(s) con más de 15 días sin resolución.
               </button>
             )}
             {financialKPIs?.totalSettlementObserved > 0 && (
@@ -84,7 +121,7 @@ export const Header: React.FC<{
                 onClick={onNavigateToFunds}
                 className="hover:underline text-rose-300 font-medium cursor-pointer"
               >
-                🔴 {financialKPIs.totalSettlementObserved} rendición(es) de fondos observada(s) con necesidad de corrección.
+                {financialKPIs.totalSettlementObserved} rendición(es) de fondos observada(s) con necesidad de corrección.
               </button>
             )}
             {financialKPIs?.departmentsWithLowBalance > 0 && (
@@ -92,12 +129,12 @@ export const Header: React.FC<{
                 onClick={onNavigateToFunds}
                 className="hover:underline text-amber-300 font-medium cursor-pointer"
               >
-                ⚠️ {financialKPIs.departmentsWithLowBalance} área(s) con saldo financiero bajo (&lt; 15%).
+                {financialKPIs.departmentsWithLowBalance} área(s) con saldo financiero bajo (&lt; 15%).
               </button>
             )}
             {inactiveDepts.length > 0 && (
               <span className="text-amber-200/90">
-                • {inactiveDepts.length} área(s) sin registrar actividad reciente ({inactiveDepts.map(d => d.departmentName.split(' ')[0]).join(', ')}).
+                • {inactiveDepts.length} área(s) sin registrar actividad reciente ({inactiveDepts.map((d) => d.departmentName.split(' ')[0]).join(', ')}).
               </span>
             )}
           </div>
@@ -112,9 +149,9 @@ export const Header: React.FC<{
         {/* Left: Branding & Municipal Crest */}
         <div className="flex items-center gap-3.5">
           <div className="relative shrink-0 flex items-center justify-center">
-            <img 
-              src="/logo.png" 
-              alt="Escudo Oficial Municipalidad de Itá Ibaté" 
+            <img
+              src="/logo.png"
+              alt="Escudo Oficial Municipalidad de Itá Ibaté"
               className="w-11 h-11 object-contain drop-shadow hover:scale-105 transition-transform"
             />
           </div>
@@ -143,8 +180,8 @@ export const Header: React.FC<{
           <button
             onClick={onNavigateToDrive}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
-              googleToken 
-                ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/40' 
+              googleToken
+                ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/40'
                 : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/60'
             }`}
             title="Conexión de sincronización de datos con Google Drive y Planillas Excel"
@@ -157,7 +194,7 @@ export const Header: React.FC<{
           </button>
         </div>
 
-        {/* Right: Privacy Toggle & User Selector */}
+        {/* Right: Privacy Toggle & Single Admin Account Menu */}
         <div className="flex items-center gap-2.5">
           {/* Privacy protection toggle (Ley 25.326) */}
           <button
@@ -182,78 +219,21 @@ export const Header: React.FC<{
             )}
           </button>
 
-          {/* Quick Role Switcher Dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setShowRoleSwitcher(!showRoleSwitcher)}
-              className="flex items-center gap-2 bg-gradient-to-r from-sky-900/50 to-blue-900/40 hover:from-sky-800/60 hover:to-blue-800/50 border border-sky-500/30 px-3 py-1.5 rounded-lg text-xs text-sky-200 font-medium transition cursor-pointer"
-            >
-              <UserCheck className="w-3.5 h-3.5 text-sky-400" />
-              <span className="hidden sm:inline">Simular Área / Rol</span>
-              <ChevronDown className="w-3 h-3 text-sky-300" />
-            </button>
-
-            {showRoleSwitcher && (
-              <div className="absolute right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-50 text-xs">
-                <div className="px-2 py-1.5 text-[11px] font-semibold text-slate-400 border-b border-slate-800 flex items-center justify-between">
-                  <span>CAMBIAR USUARIO MUNICIPAL</span>
-                  <span className="text-[10px] text-sky-400">Modo Demo</span>
-                </div>
-                <div className="py-1 max-h-64 overflow-y-auto space-y-1">
-                  {users.map(u => (
-                    <button
-                      key={u.id}
-                      onClick={() => {
-                        loginAsUser(u.id);
-                        setShowRoleSwitcher(false);
-                      }}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between transition cursor-pointer ${
-                        currentUser?.id === u.id
-                          ? 'bg-sky-600 text-white font-medium'
-                          : 'text-slate-300 hover:bg-slate-800'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-medium truncate">{u.name}</div>
-                        <div className="text-[10px] opacity-75">{u.position}</div>
-                      </div>
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-black/30 uppercase">
-                        {u.role === 'ADMIN_GENERAL' ? 'ADMIN' : 'ÁREA'}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <div className="pt-2 border-t border-slate-800 flex gap-1">
-                  <button
-                    onClick={() => {
-                      loginWithGoogle();
-                      setShowRoleSwitcher(false);
-                    }}
-                    className="flex-1 text-center py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 rounded font-medium text-[11px] flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <Sparkles className="w-3 h-3 text-sky-400" />
-                    Acceso con Google
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Current User Badge & Menu */}
+          {/* Current Admin Badge & Menu */}
           <div className="relative">
             <button
               onClick={() => setShowUserMenu(!showUserMenu)}
-              className="flex items-center gap-2.5 pl-2 pr-1 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 transition cursor-pointer"
+              className="flex items-center gap-2.5 pl-2 pr-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 transition cursor-pointer"
             >
               <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-sky-500 to-blue-600 flex items-center justify-center text-white text-xs font-bold ring-2 ring-sky-500/20">
-                {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'M'}
+                {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'A'}
               </div>
               <div className="hidden lg:block text-left">
-                <div className="text-xs font-semibold text-slate-100 max-w-[130px] truncate leading-tight">
-                  {currentUser?.name || 'Mesa Municipal'}
+                <div className="text-xs font-semibold text-slate-100 max-w-[140px] truncate leading-tight">
+                  {currentUser?.name || 'Administrador General'}
                 </div>
-                <div className="text-[10px] text-sky-400 truncate leading-tight">
-                  {currentUser?.position || 'Personal Municipal'}
+                <div className="text-[10px] text-sky-400 truncate leading-tight font-mono">
+                  @{adminUsername} • Admin Único
                 </div>
               </div>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
@@ -263,38 +243,21 @@ export const Header: React.FC<{
               <div className="absolute right-0 mt-2 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2 z-50 text-xs">
                 <div className="p-2 border-b border-slate-800">
                   <p className="font-semibold text-white">{currentUser?.name}</p>
-                  <p className="text-slate-400 text-[11px]">{currentUser?.email}</p>
+                  <p className="text-slate-400 text-[11px] font-mono">Usuario: {adminUsername}</p>
+                  <p className="text-slate-500 text-[11px] truncate">{currentUser?.email}</p>
                   <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/30">
                     <ShieldCheck className="w-3 h-3" />
-                    {currentUser?.role === 'ADMIN_GENERAL' ? 'Administrador General' : 'Responsable de Sector'}
+                    Administrador General Único
                   </div>
                 </div>
 
-                <div className="py-1">
+                <div className="py-1 space-y-0.5">
                   <button
-                    onClick={() => {
-                      setShowUserMenu(false);
-                      setCurrentPassInput('');
-                      setNewPassInput('');
-                      setConfirmPassInput('');
-                      setPassError(null);
-                      setPassSuccess(false);
-                      setShowPasswordModal(true);
-                    }}
+                    onClick={openPasswordModal}
                     className="w-full text-left px-2 py-1.5 text-sky-300 hover:bg-sky-950/40 rounded flex items-center gap-2 cursor-pointer"
                   >
                     <KeyRound className="w-3.5 h-3.5 text-sky-400" />
-                    Cambiar Contraseña de Acceso
-                  </button>
-                  <button
-                    onClick={() => {
-                      resetAllData();
-                      setShowUserMenu(false);
-                    }}
-                    className="w-full text-left px-2 py-1.5 text-amber-300 hover:bg-amber-950/40 rounded flex items-center gap-2 cursor-pointer"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Restablecer Datos Iniciales
+                    Cambiar Usuario / Contraseña
                   </button>
                   <button
                     onClick={() => {
@@ -313,7 +276,7 @@ export const Header: React.FC<{
         </div>
       </div>
 
-      {/* Modal: Cambiar Contraseña de Acceso */}
+      {/* Modal: Cambiar Usuario y Contraseña de Acceso */}
       {showPasswordModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
@@ -323,11 +286,11 @@ export const Header: React.FC<{
                   <KeyRound className="w-4 h-4 text-sky-400" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-white text-sm">Cambiar Contraseña de Acceso</h3>
-                  <p className="text-[11px] text-slate-400">Modificar la clave de ingreso institucional</p>
+                  <h3 className="font-bold text-white text-sm">Cambiar Credenciales de Acceso</h3>
+                  <p className="text-[11px] text-slate-400">Modificar usuario y contraseña del Administrador Único</p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={() => setShowPasswordModal(false)}
                 className="text-slate-400 hover:text-white cursor-pointer"
               >
@@ -337,8 +300,10 @@ export const Header: React.FC<{
 
             {passSuccess ? (
               <div className="p-4 bg-emerald-950/70 border border-emerald-500/40 rounded-xl text-center space-y-2">
-                <p className="text-xs font-bold text-emerald-300">¡Contraseña modificada exitosamente!</p>
-                <p className="text-[11px] text-emerald-400/80">La nueva contraseña está activa y sincronizada en el sistema.</p>
+                <p className="text-xs font-bold text-emerald-300">Credenciales actualizadas exitosamente</p>
+                <p className="text-[11px] text-emerald-400/80">
+                  Su nueva contraseña y usuario quedaron guardados de forma segura en el sistema.
+                </p>
                 <button
                   type="button"
                   onClick={() => setShowPasswordModal(false)}
@@ -349,18 +314,24 @@ export const Header: React.FC<{
               </div>
             ) : (
               <form
-                onSubmit={(e) => {
+                autoComplete="on"
+                onSubmit={async (e) => {
                   e.preventDefault();
                   setPassError(null);
                   if (newPassInput !== confirmPassInput) {
                     setPassError('La nueva contraseña y su confirmación no coinciden.');
                     return;
                   }
-                  const res = changeSystemPassword(currentPassInput, newPassInput);
-                  if (!res.success) {
-                    setPassError(res.error || 'Error al cambiar la contraseña.');
-                  } else {
-                    setPassSuccess(true);
+                  setIsSavingPass(true);
+                  try {
+                    const res = await changeSystemPassword(currentPassInput, newPassInput, usernameInput);
+                    if (!res.success) {
+                      setPassError(res.error || 'Error al cambiar la contraseña.');
+                    } else {
+                      setPassSuccess(true);
+                    }
+                  } finally {
+                    setIsSavingPass(false);
                   }
                 }}
                 className="space-y-3 text-xs"
@@ -373,14 +344,33 @@ export const Header: React.FC<{
 
                 <div>
                   <label className="block text-slate-300 font-medium mb-1">
+                    Usuario Administrador:
+                  </label>
+                  <input
+                    type="text"
+                    name="username"
+                    autoComplete="username"
+                    required
+                    minLength={3}
+                    value={usernameInput}
+                    onChange={(e) => setUsernameInput(e.target.value)}
+                    placeholder="Ej. admin"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">
                     Contraseña Actual:
                   </label>
                   <input
                     type="password"
+                    name="current-password"
+                    autoComplete="current-password"
                     required
                     value={currentPassInput}
                     onChange={(e) => setCurrentPassInput(e.target.value)}
-                    placeholder="Clave actual (inicial: Gestion2629)"
+                    placeholder="Ingrese su contraseña actual"
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
                   />
                 </div>
@@ -391,6 +381,8 @@ export const Header: React.FC<{
                   </label>
                   <input
                     type="password"
+                    name="new-password"
+                    autoComplete="new-password"
                     required
                     minLength={6}
                     value={newPassInput}
@@ -406,6 +398,8 @@ export const Header: React.FC<{
                   </label>
                   <input
                     type="password"
+                    name="confirm-new-password"
+                    autoComplete="new-password"
                     required
                     value={confirmPassInput}
                     onChange={(e) => setConfirmPassInput(e.target.value)}
@@ -424,10 +418,11 @@ export const Header: React.FC<{
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg font-bold shadow-md cursor-pointer flex items-center gap-1.5"
+                    disabled={isSavingPass}
+                    className="px-4 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg font-bold shadow-md cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
                   >
                     <KeyRound className="w-3.5 h-3.5" />
-                    <span>Guardar Nueva Contraseña</span>
+                    <span>{isSavingPass ? 'Guardando...' : 'Guardar Nueva Contraseña'}</span>
                   </button>
                 </div>
               </form>

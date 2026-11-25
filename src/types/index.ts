@@ -2,12 +2,16 @@ export type UserRole = 'ADMIN_GENERAL' | 'RESPONSABLE_AREA' | 'OPERADOR_AREA';
 
 export interface MunicipalUser {
   id: string;
+  username?: string;
   name: string;
   email: string;
   role: UserRole;
-  departmentId?: string; // undefined means global access (e.g. Intendente / Modernización)
-  position: string; // e.g. "Intendente Municipal", "Director de Deportes", etc.
+  departmentId?: string; // undefined means global access (only single ADMIN_GENERAL)
+  position: string; // e.g. "Administrador General", "Director de Deportes", etc.
   avatar?: string;
+  passwordHash?: string;
+  passwordSalt?: string;
+  passwordIterations?: number;
 }
 
 export type DepartmentCategory = 
@@ -15,7 +19,8 @@ export type DepartmentCategory =
   | 'DIRECCION_GENERAL' 
   | 'DIRECCION' 
   | 'COORDINACION' 
-  | 'PUNTO_DIGITAL';
+  | 'PUNTO_DIGITAL'
+  | 'DEPENDENCIA_DEM';
 
 export interface Department {
   id: string;
@@ -32,7 +37,7 @@ export interface Department {
   color: string; // Tailwind color token or hex
   icon: string;
   active: boolean;
-  moduleType: 'GENERAL' | 'DEPORTES' | 'ACCION_SOCIAL' | 'OBRAS_PUBLICAS' | 'CULTURA' | 'PUNTO_DIGITAL' | 'TURISMO' | 'SALUD' | 'CONTROL_URBANO' | 'RRHH';
+  moduleType: 'GENERAL' | 'DEPORTES' | 'ACCION_SOCIAL' | 'OBRAS_PUBLICAS' | 'CULTURA' | 'PUNTO_DIGITAL' | 'TURISMO' | 'SALUD' | 'CONTROL_URBANO' | 'RRHH' | 'ESCUELA_EMPRESA';
   customFields?: {
     id: string;
     label: string;
@@ -154,6 +159,34 @@ export interface CulturalStudent {
   tutorDni?: string;
   tutorPhone?: string;
   tutorRelationship?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+// ==========================================
+// MÓDULO ESCUELA EMPRESA (Dependiente del D.E.M.)
+// Formación en Panadería y Pastelería
+// ==========================================
+export type EscuelaEmpresaSpecialty = 'PANADERIA' | 'PASTELERIA' | 'PANADERIA_Y_PASTELERIA';
+
+export interface EscuelaEmpresaStudent {
+  id: string;
+  enrollmentNumber: string; // ej. EE-2026-001
+  fullName: string;
+  dni: string;
+  birthDate?: string;
+  age?: number;
+  phone: string;
+  email?: string;
+  address: string;
+  neighborhood: string;
+  specialty: EscuelaEmpresaSpecialty;
+  shift: 'MANANA' | 'TARDE' | 'NOCHE';
+  level: 'INICIAL' | 'INTERMEDIO' | 'AVANZADO';
+  instructorName?: string;
+  hasFoodHandlingCert: boolean;
+  enrollmentDate: string;
+  status: 'ACTIVO' | 'REGULAR' | 'EGRESADO' | 'BAJA';
   notes?: string;
   createdAt: string;
 }

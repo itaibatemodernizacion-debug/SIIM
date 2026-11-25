@@ -29,14 +29,17 @@ import {
   X,
   Layers,
   Shield,
-  Trophy
+  Trophy,
+  ChefHat
 } from 'lucide-react';
 import { exportTicketsToExcel } from '../../lib/excelUtils';
+import { downloadDepartmentTemplate } from '../../lib/sectorTemplates';
 import { NecrologicalRegistry } from '../necrological/NecrologicalRegistry';
 import { UrbanControlModule } from '../urban-control/UrbanControlModule';
 import { HumanResourcesModule } from '../rrhh/HumanResourcesModule';
 import { CultureEducationModule } from '../culture/CultureEducationModule';
 import { SportsModule } from '../sports/SportsModule';
+import { EscuelaEmpresaModule } from '../escuela-empresa/EscuelaEmpresaModule';
 
 const PROVINCES_TOURISM = [
   'Corrientes (Capital e Interior)',
@@ -68,11 +71,14 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
   const defaultDeptId = initialDeptId || currentUser?.departmentId || departments[0]?.id;
   const [activeDeptId, setActiveDeptId] = useState<string>(defaultDeptId);
 
-  // Sub-view toggle (TICKETS, NECROLOGICAL, CONTROL_URBANO, RRHH, CULTURE, SPORTS)
-  const [activeSubView, setActiveSubView] = useState<'TICKETS' | 'NECROLOGICAL' | 'CONTROL_URBANO' | 'RRHH' | 'CULTURE' | 'SPORTS'>('TICKETS');
+  // Sub-view toggle (TICKETS, NECROLOGICAL, CONTROL_URBANO, RRHH, CULTURE, SPORTS, ESCUELA_EMPRESA)
+  const [activeSubView, setActiveSubView] = useState<'TICKETS' | 'NECROLOGICAL' | 'CONTROL_URBANO' | 'RRHH' | 'CULTURE' | 'SPORTS' | 'ESCUELA_EMPRESA'>(
+    defaultDeptId === 'escuela-empresa' ? 'ESCUELA_EMPRESA' : 'TICKETS'
+  );
 
   // Edit Leader Modal state
   const [showLeaderModal, setShowLeaderModal] = useState(false);
+  const [areaNotice, setAreaNotice] = useState<string | null>(null);
   const [leaderForm, setLeaderForm] = useState({
     leaderName: '',
     leaderTitle: '',
@@ -93,7 +99,8 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
                              activeDept?.name?.toLowerCase().includes('control urbano') ||
                              activeDept?.name?.toLowerCase().includes('seguridad ciudadana');
 
-  const isRRHHArea = activeDept?.id === 'coord-rrhh' ||
+  const isRRHHArea = activeDept?.id === 'coord-recursos-humanos' ||
+                     activeDept?.id === 'coord-rrhh' ||
                      activeDept?.moduleType === 'RRHH' ||
                      activeDept?.name?.toLowerCase().includes('recursos humanos');
 
@@ -105,6 +112,10 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
   const isSportsArea = activeDept?.id === 'dir-deportes' ||
                        activeDept?.moduleType === 'DEPORTES' ||
                        activeDept?.name?.toLowerCase().includes('deportes');
+
+  const isEscuelaEmpresaArea = activeDept?.id === 'escuela-empresa' ||
+                               activeDept?.moduleType === 'ESCUELA_EMPRESA' ||
+                               activeDept?.name?.toLowerCase().includes('escuela empresa');
 
   const openLeaderEditModal = () => {
     if (!activeDept) return;
@@ -121,13 +132,12 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
 
   const handleSaveLeader = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!leaderForm.leaderName) {
-      alert('Por favor ingrese el nombre y apellido del funcionario a cargo.');
+    if (!leaderForm.leaderName.trim()) {
       return;
     }
     updateDepartmentLeader(activeDept.id, leaderForm);
     setShowLeaderModal(false);
-    alert(`Titular de "${activeDept.name}" actualizado exitosamente.`);
+    setAreaNotice(`Titular de "${activeDept.name}" actualizado y guardado permanentemente.`);
   };
 
   // Specific form states
@@ -318,6 +328,21 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
 
   return (
     <div className="space-y-6">
+      {areaNotice && (
+        <div className="p-3 bg-emerald-950/70 border border-emerald-500/40 rounded-xl text-xs text-emerald-200 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-medium">{areaNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAreaNotice(null)}
+            className="text-emerald-300 hover:text-white cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
       {/* Sector Navigation Selector with Category Hierarchical Badges */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-800 scrollbar-thin">
         {departments.map(d => {
@@ -332,12 +357,14 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
                 setActiveDeptId(d.id);
                 if (d.id === 'dir-gen-seguridad' || d.moduleType === 'CONTROL_URBANO') {
                   setActiveSubView('CONTROL_URBANO');
-                } else if (d.id === 'coord-rrhh' || d.moduleType === 'RRHH' || d.name?.toLowerCase().includes('recursos humanos')) {
+                } else if (d.id === 'coord-recursos-humanos' || d.id === 'coord-rrhh' || d.moduleType === 'RRHH' || d.name?.toLowerCase().includes('recursos humanos')) {
                   setActiveSubView('RRHH');
                 } else if (d.id === 'sec-cultura' || d.moduleType === 'CULTURA' || d.name?.toLowerCase().includes('cultura')) {
                   setActiveSubView('CULTURE');
                 } else if (d.id === 'dir-deportes' || d.moduleType === 'DEPORTES' || d.name?.toLowerCase().includes('deportes')) {
                   setActiveSubView('SPORTS');
+                } else if (d.id === 'escuela-empresa' || d.moduleType === 'ESCUELA_EMPRESA' || d.name?.toLowerCase().includes('escuela empresa')) {
+                  setActiveSubView('ESCUELA_EMPRESA');
                 } else {
                   setActiveSubView('TICKETS');
                 }
@@ -345,16 +372,30 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
               className={`px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center gap-2 shrink-0 ${
                 isSelected
                   ? 'bg-sky-600 text-white shadow-md ring-2 ring-sky-400/40'
-                  : isSecretaria 
-                    ? 'bg-slate-900 text-slate-200 hover:bg-slate-800 border border-sky-500/30'
-                    : 'bg-slate-950 text-slate-400 hover:bg-slate-800 hover:text-white border border-slate-800/80'
+                  : d.category === 'DEPENDENCIA_DEM'
+                    ? 'bg-amber-950/30 text-amber-200 hover:bg-amber-950/60 border border-amber-500/40'
+                    : isSecretaria 
+                      ? 'bg-slate-900 text-slate-200 hover:bg-slate-800 border border-sky-500/30'
+                      : 'bg-slate-950 text-slate-400 hover:bg-slate-800 hover:text-white border border-slate-800/80'
               }`}
             >
-              <Building2 className={`w-3.5 h-3.5 ${isSecretaria ? 'text-sky-400' : 'text-slate-400'}`} />
+              {d.category === 'DEPENDENCIA_DEM' ? (
+                <ChefHat className="w-3.5 h-3.5 text-amber-400" />
+              ) : (
+                <Building2 className={`w-3.5 h-3.5 ${isSecretaria ? 'text-sky-400' : 'text-slate-400'}`} />
+              )}
               <div className="flex flex-col text-left">
                 <span className="leading-tight">{d.shortName}</span>
                 <span className="text-[9px] opacity-70 font-mono">
-                  {d.category === 'SECRETARIA' ? 'SECRETARÍA' : d.category === 'DIRECCION_GENERAL' ? 'DIR. GRAL' : d.category === 'COORDINACION' ? 'COORD.' : 'ÁREA'}
+                  {d.category === 'DEPENDENCIA_DEM'
+                    ? 'DEP. D.E.M.'
+                    : d.category === 'SECRETARIA'
+                    ? 'SECRETARÍA'
+                    : d.category === 'DIRECCION_GENERAL'
+                    ? 'DIR. GRAL'
+                    : d.category === 'COORDINACION'
+                    ? 'COORD.'
+                    : 'ÁREA'}
                 </span>
               </div>
               {isUserDept && (
@@ -405,6 +446,15 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
             >
               <Edit3 className="w-3 h-3" />
               <span>Editar Responsable a Cargo</span>
+            </button>
+
+            <button
+              onClick={() => activeDept && downloadDepartmentTemplate(activeDept)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-950/70 hover:bg-emerald-800 text-emerald-300 hover:text-white border border-emerald-500/40 rounded-lg text-[11px] font-semibold transition cursor-pointer"
+              title="Descargar planilla Excel modelo específica para este sector"
+            >
+              <Download className="w-3 h-3" />
+              <span>Descargar Modelo Excel del Área</span>
             </button>
           </div>
         </div>
@@ -605,6 +655,41 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
         </div>
       )}
 
+      {/* Escuela Empresa (Dependiente del D.E.M.) Sub-View Navigation */}
+      {isEscuelaEmpresaArea && (
+        <div className="bg-slate-900 border border-amber-500/30 p-2 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveSubView('ESCUELA_EMPRESA')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeSubView === 'ESCUELA_EMPRESA'
+                  ? 'bg-amber-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <ChefHat className="w-3.5 h-3.5" />
+              <span>Padrón Escuela Empresa (Panadería y Pastelería)</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSubView('TICKETS')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                activeSubView === 'TICKETS'
+                  ? 'bg-slate-800 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Mesa de Trámites</span>
+            </button>
+          </div>
+
+          <span className="text-[11px] text-amber-400 font-semibold pr-2">
+            Dependiente del D.E.M. (Departamento Ejecutivo Municipal)
+          </span>
+        </div>
+      )}
+
       {/* RENDER VIEW: Specific submodules */}
       {isSocialArea && activeSubView === 'NECROLOGICAL' ? (
         <NecrologicalRegistry />
@@ -616,6 +701,8 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
         <CultureEducationModule />
       ) : isSportsArea && activeSubView === 'SPORTS' ? (
         <SportsModule />
+      ) : isEscuelaEmpresaArea && activeSubView === 'ESCUELA_EMPRESA' ? (
+        <EscuelaEmpresaModule />
       ) : null}
 
       {/* Grid: Fast Daily Registry Form tailored to the Sector + Recent Sector Records */}
@@ -623,7 +710,8 @@ export const AreaWorkspaces: React.FC<{ initialDeptId?: string }> = ({ initialDe
        (!isUrbanControlArea || activeSubView === 'TICKETS') && 
        (!isRRHHArea || activeSubView === 'TICKETS') && 
        (!isCultureArea || activeSubView === 'TICKETS') && 
-       (!isSportsArea || activeSubView === 'TICKETS') && (
+       (!isSportsArea || activeSubView === 'TICKETS') && 
+       (!isEscuelaEmpresaArea || activeSubView === 'TICKETS') && (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Fast Sector Form */}
         <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">

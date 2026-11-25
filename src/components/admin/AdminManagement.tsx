@@ -24,15 +24,18 @@ import {
   Globe,
   Database,
   CheckCircle2,
-  Trash
+  Trash,
+  ChefHat
 } from 'lucide-react';
 
 export const AdminManagement: React.FC = () => {
   const { 
     departments, 
+    departmentsLastSavedAt,
     addDepartment, 
     updateDepartment, 
     deleteDepartment, 
+    updateDepartmentLeader,
     departmentKPIs,
     auditLogs,
     resetAllData,
@@ -43,19 +46,23 @@ export const AdminManagement: React.FC = () => {
     expenses,
     employees,
     culturalStudents,
+    escuelaEmpresaStudents,
     driversLicenses,
     trafficFines
   } = useMunicipalData();
 
-  const { users, currentUser, addUser, deleteUser, isAdmin, changeSystemPassword } = useAuth();
+  const { users, currentUser, adminUsername, isUsingDefaultPassword, addUser, deleteUser, changeSystemPassword } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'AREAS' | 'ORGANIGRAMA' | 'USERS' | 'AUDIT' | 'BACKUP'>('ORGANIGRAMA');
+  const [adminNotice, setAdminNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Password modification state in Admin
+  // Password & username modification state in Admin
+  const [adminUsernameInput, setAdminUsernameInput] = useState(adminUsername);
   const [adminCurrentPass, setAdminCurrentPass] = useState('');
   const [adminNewPass, setAdminNewPass] = useState('');
   const [adminConfirmPass, setAdminConfirmPass] = useState('');
   const [adminPassMessage, setAdminPassMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSavingAdminPass, setIsSavingAdminPass] = useState(false);
 
   // Quick Leader Edit Modal State
   const [showQuickLeaderModal, setShowQuickLeaderModal] = useState(false);
@@ -85,7 +92,7 @@ export const AdminManagement: React.FC = () => {
     phone: string;
     color: string;
     icon: string;
-    moduleType: 'GENERAL' | 'DEPORTES' | 'ACCION_SOCIAL' | 'OBRAS_PUBLICAS' | 'CULTURA' | 'PUNTO_DIGITAL' | 'TURISMO' | 'SALUD' | 'CONTROL_URBANO' | 'RRHH';
+    moduleType: 'GENERAL' | 'DEPORTES' | 'ACCION_SOCIAL' | 'OBRAS_PUBLICAS' | 'CULTURA' | 'PUNTO_DIGITAL' | 'TURISMO' | 'SALUD' | 'CONTROL_URBANO' | 'RRHH' | 'ESCUELA_EMPRESA';
   }>({
     name: '',
     shortName: '',
@@ -102,17 +109,21 @@ export const AdminManagement: React.FC = () => {
     moduleType: 'GENERAL'
   });
 
-  // User Modal State
+  // User Modal State (non-admin only — system allows strictly ONE ADMIN_GENERAL)
   const [showUserModal, setShowUserModal] = useState(false);
   const [userForm, setUserForm] = useState<{
+    username: string;
     name: string;
     email: string;
-    role: 'ADMIN_GENERAL' | 'RESPONSABLE_AREA' | 'OPERADOR_AREA';
+    plainPassword: string;
+    role: 'RESPONSABLE_AREA' | 'OPERADOR_AREA';
     departmentId: string;
     position: string;
   }>({
+    username: '',
     name: '',
     email: '',
+    plainPassword: '',
     role: 'RESPONSABLE_AREA',
     departmentId: departments[0]?.id || '',
     position: 'Responsable de Sector'
@@ -174,29 +185,22 @@ export const AdminManagement: React.FC = () => {
   const handleSaveQuickLeader = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedLeaderDept) return;
-    if (!quickLeaderForm.leaderName) {
-      alert('Por favor ingrese el nombre del titular a cargo.');
+    if (!quickLeaderForm.leaderName.trim()) {
+      setAdminNotice({ type: 'error', text: 'Por favor ingrese el nombre del titular a cargo.' });
       return;
     }
-    const { updateDepartmentLeader } = useMunicipalData as any;
-    // We can update through updateDepartment
-    updateDepartment({
-      ...selectedLeaderDept,
-      leaderName: quickLeaderForm.leaderName,
-      leaderTitle: quickLeaderForm.leaderTitle,
-      leaderDni: quickLeaderForm.leaderDni,
-      leaderEmail: quickLeaderForm.leaderEmail,
-      phone: quickLeaderForm.phone,
-      legalReference: quickLeaderForm.legalReference
-    });
+    updateDepartmentLeader(selectedLeaderDept.id, quickLeaderForm);
     setShowQuickLeaderModal(false);
-    alert(`Titular de "${selectedLeaderDept.name}" actualizado correctamente.`);
+    setAdminNotice({
+      type: 'success',
+      text: `Titular de "${selectedLeaderDept.name}" guardado permanentemente (almacenamiento local y nube).`
+    });
   };
 
   const handleSaveDept = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!deptForm.name || !deptForm.leaderName) {
-      alert('Por favor ingrese el nombre del área y el responsable.');
+    if (!deptForm.name.trim() || !deptForm.leaderName.trim()) {
+      setAdminNotice({ type: 'error', text: 'Por favor ingrese el nombre del área y el responsable.' });
       return;
     }
 
@@ -207,6 +211,7 @@ export const AdminManagement: React.FC = () => {
         parentId: deptForm.parentId || undefined,
         shortName: deptForm.shortName || deptForm.name.split(' ')[0]
       });
+      setAdminNotice({ type: 'success', text: `Área "${deptForm.name}" actualizada y guardada permanentemente.` });
     } else {
       addDepartment({
         ...deptForm,
@@ -214,25 +219,46 @@ export const AdminManagement: React.FC = () => {
         shortName: deptForm.shortName || deptForm.name.split(' ')[0],
         active: true
       });
+      setAdminNotice({ type: 'success', text: `Nueva área "${deptForm.name}" creada y guardada permanentemente.` });
     }
     setShowDeptModal(false);
   };
 
-  const handleSaveUser = (e: React.FormEvent) => {
+  const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userForm.name || !userForm.email) {
-      alert('Complete nombre y correo institucional.');
+    if (!userForm.name.trim() || !userForm.email.trim()) {
+      setAdminNotice({ type: 'error', text: 'Complete nombre y correo institucional.' });
       return;
     }
 
-    addUser(userForm);
+    const res = await addUser({
+      username: userForm.username.trim() || userForm.email.split('@')[0],
+      name: userForm.name.trim(),
+      email: userForm.email.trim(),
+      role: userForm.role,
+      departmentId: userForm.departmentId,
+      position: userForm.position.trim() || 'Responsable de Sector',
+      plainPassword: userForm.plainPassword.trim() || undefined
+    });
+
+    if (!res.success) {
+      setAdminNotice({ type: 'error', text: res.error || 'No se pudo crear el usuario.' });
+      return;
+    }
+
     setShowUserModal(false);
     setUserForm({
+      username: '',
       name: '',
       email: '',
+      plainPassword: '',
       role: 'RESPONSABLE_AREA',
       departmentId: departments[0]?.id || '',
       position: 'Responsable de Sector'
+    });
+    setAdminNotice({
+      type: 'success',
+      text: 'Usuario registrado (perfil restringido: solo el Administrador General único accede a la información).'
     });
   };
 
@@ -243,13 +269,14 @@ export const AdminManagement: React.FC = () => {
       institution: 'Municipalidad de Itá Ibaté - Corrientes',
       version: '2.5',
       departments,
-      users,
+      users: users.map(({ passwordHash: _h, passwordSalt: _s, passwordIterations: _i, ...safeUser }) => safeUser),
       tickets,
       citizens,
       fundAllocations,
       expenses,
       employees,
       culturalStudents,
+      escuelaEmpresaStudents,
       driversLicenses,
       trafficFines,
       auditLogs
@@ -282,6 +309,12 @@ export const AdminManagement: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {departmentsLastSavedAt && (
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-[11px] font-semibold text-emerald-300">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              Autoridades guardadas
+            </span>
+          )}
           <button
             onClick={openAddDeptModal}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold shadow-md transition cursor-pointer"
@@ -291,6 +324,29 @@ export const AdminManagement: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Inline feedback banner */}
+      {adminNotice && (
+        <div
+          className={`p-3.5 rounded-2xl text-xs flex items-center justify-between gap-3 border ${
+            adminNotice.type === 'success'
+              ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-200'
+              : 'bg-rose-950/70 border-rose-500/40 text-rose-200'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span className="font-medium">{adminNotice.text}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAdminNotice(null)}
+            className="text-slate-300 hover:text-white cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Navigation Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-800 pb-2 overflow-x-auto">
@@ -368,7 +424,10 @@ export const AdminManagement: React.FC = () => {
                 Organigrama por Decreto Municipal: 7 Secretarías con sus respectivas Direcciones Generales, Coordinaciones y Titulares a cargo.
               </p>
             </div>
-            <div className="text-xs text-slate-400 flex items-center gap-2">
+            <div className="text-xs text-slate-400 flex flex-wrap items-center gap-2">
+              <span className="px-2.5 py-1 bg-amber-950/60 border border-amber-500/30 rounded-lg text-amber-300 font-mono">
+                {departments.filter(d => d.category === 'DEPENDENCIA_DEM').length} Dep. D.E.M.
+              </span>
               <span className="px-2.5 py-1 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 font-mono">
                 {departments.filter(d => d.category === 'SECRETARIA').length} Secretarías
               </span>
@@ -380,6 +439,74 @@ export const AdminManagement: React.FC = () => {
               </span>
             </div>
           </div>
+
+          {/* Direct Dependencies of the D.E.M. (Departamento Ejecutivo Municipal) */}
+          {departments.some(d => d.category === 'DEPENDENCIA_DEM') && (
+            <div className="bg-slate-900 border border-amber-500/30 rounded-2xl p-5 shadow-sm space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-white text-sm">
+                      Dependencias Directas del D.E.M. (Departamento Ejecutivo Municipal)
+                    </h4>
+                    <p className="text-[11px] text-amber-300/80">
+                      Programas e instituciones municipales con dependencia orgánica directa de Intendencia / D.E.M.
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 uppercase">
+                  Dependencia Directa D.E.M.
+                </span>
+              </div>
+
+              <div className="space-y-2.5">
+                {departments.filter(d => d.category === 'DEPENDENCIA_DEM').map(demDept => (
+                  <div
+                    key={demDept.id}
+                    className="bg-slate-950 p-3.5 rounded-xl border border-amber-500/20 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:border-amber-500/40 transition"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
+                        <ChefHat className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h5 className="font-bold text-white text-sm">{demDept.name}</h5>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                            DEPENDIENTE DEL D.E.M.
+                          </span>
+                          {demDept.legalReference && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                              {demDept.legalReference}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300 mt-1">
+                          <span>
+                            Titular a cargo: <strong className="text-emerald-300">{demDept.leaderName}</strong>
+                            {demDept.leaderTitle && <span className="text-slate-400 font-mono text-[11px] ml-1">({demDept.leaderTitle})</span>}
+                          </span>
+                          {demDept.leaderEmail && <span>• Email: <span className="text-slate-400">{demDept.leaderEmail}</span></span>}
+                          {demDept.phone && <span>• Tel: <span className="text-slate-400">{demDept.phone}</span></span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => openQuickLeaderModal(demDept)}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold shadow-sm flex items-center gap-1.5 cursor-pointer self-end md:self-auto shrink-0"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Editar Titular a Cargo</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* List of 7 Secretarías and nested child Direcciones & Coordinaciones */}
           <div className="space-y-4">
@@ -621,13 +748,22 @@ export const AdminManagement: React.FC = () => {
       {/* TAB 2: USERS MANAGEMENT */}
       {activeTab === 'USERS' && (
         <div className="space-y-4">
-          <div className="flex justify-end">
+          <div className="bg-sky-950/40 border border-sky-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5 text-xs">
+              <ShieldCheck className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
+              <div>
+                <h4 className="font-bold text-white">Política de Administrador Único Activa</h4>
+                <p className="text-slate-300 mt-0.5">
+                  Solo existe <strong>1 único Administrador General</strong> (<span className="font-mono text-sky-300">@{adminUsername}</span>) con acceso completo a toda la información. Cualquier cuenta que no sea Administrador tiene el acceso completamente bloqueado.
+                </p>
+              </div>
+            </div>
             <button
               onClick={() => setShowUserModal(true)}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold shadow-md transition cursor-pointer"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold shadow-md transition cursor-pointer shrink-0 self-start sm:self-auto"
             >
               <Users className="w-4 h-4" />
-              <span>Crear Nuevo Usuario Municipal</span>
+              <span>Registrar Usuario Restringido</span>
             </button>
           </div>
 
@@ -635,10 +771,10 @@ export const AdminManagement: React.FC = () => {
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-800 bg-slate-950/40 text-slate-400 uppercase text-[11px] font-semibold">
-                  <th className="py-3 px-3.5">Funcionario / Empleado</th>
-                  <th className="py-3 px-3">Correo Institucional</th>
+                  <th className="py-3 px-3.5">Funcionario / Usuario</th>
+                  <th className="py-3 px-3">Usuario / Correo</th>
                   <th className="py-3 px-3">Cargo</th>
-                  <th className="py-3 px-3">Rol del Sistema</th>
+                  <th className="py-3 px-3">Nivel de Acceso</th>
                   <th className="py-3 px-3 text-right">Acción</th>
                 </tr>
               </thead>
@@ -649,7 +785,8 @@ export const AdminManagement: React.FC = () => {
                       {u.name}
                     </td>
                     <td className="py-3 px-3 text-slate-300 font-mono">
-                      {u.email}
+                      <div>@{u.username || u.email.split('@')[0]}</div>
+                      <div className="text-[10px] text-slate-500">{u.email}</div>
                     </td>
                     <td className="py-3 px-3 text-slate-400">
                       {u.position}
@@ -657,23 +794,23 @@ export const AdminManagement: React.FC = () => {
                     <td className="py-3 px-3">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                         u.role === 'ADMIN_GENERAL'
-                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                          : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : 'bg-rose-500/15 text-rose-300 border border-rose-500/30'
                       }`}>
-                        {u.role === 'ADMIN_GENERAL' ? 'Administrador General' : 'Responsable de Sector'}
+                        {u.role === 'ADMIN_GENERAL' ? 'Administrador Único (Acceso Total)' : 'Sin Acceso a Datos (Bloqueado)'}
                       </span>
                     </td>
                     <td className="py-3 px-3 text-right">
-                      {u.id !== currentUser?.id && (
+                      {u.role !== 'ADMIN_GENERAL' && u.id !== currentUser?.id ? (
                         <button
-                          onClick={() => {
-                            if (confirm(`¿Eliminar usuario ${u.name}?`)) deleteUser(u.id);
-                          }}
+                          onClick={() => deleteUser(u.id)}
                           className="text-rose-400 hover:text-rose-300 p-1 cursor-pointer"
                           title="Eliminar usuario"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
+                      ) : (
+                        <span className="text-[10px] text-slate-500 font-semibold">Protegido</span>
                       )}
                     </td>
                   </tr>
@@ -829,20 +966,24 @@ export const AdminManagement: React.FC = () => {
               </div>
             </div>
 
-            {/* Card 2: Contraseña de Acceso Institucional */}
+            {/* Card 2: Usuario y Contraseña de Acceso del Administrador Único */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <h3 className="font-bold text-white text-sm flex items-center gap-2">
                   <KeyRound className="w-4 h-4 text-sky-400" />
-                  <span>Contraseña Maestra de Acceso al Sistema</span>
+                  <span>Usuario y Contraseña del Administrador Único</span>
                 </h3>
-                <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                  Seguridad
+                <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${
+                  isUsingDefaultPassword
+                    ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                    : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                }`}>
+                  {isUsingDefaultPassword ? 'Clave Inicial Activa' : 'Clave Personalizada'}
                 </span>
               </div>
 
               <p className="text-xs text-slate-400 leading-relaxed">
-                El sistema restringe el ingreso exigiendo una contraseña de seguridad. La clave inicial configurada es <strong className="text-sky-300 font-mono font-bold bg-sky-950/60 px-1.5 py-0.5 rounded border border-sky-500/30">Gestion2629</strong>. Puede modificarla en cualquier momento desde este formulario.
+                Al iniciar la página siempre se solicitan usuario y contraseña. Puede modificar aquí el usuario administrador (<strong className="text-sky-300 font-mono">@{adminUsername}</strong>) y su contraseña en cualquier momento; las credenciales se guardan cifradas en el navegador y en la nube.
               </p>
 
               {adminPassMessage && (
@@ -857,37 +998,63 @@ export const AdminManagement: React.FC = () => {
               )}
 
               <form
-                onSubmit={(e) => {
+                autoComplete="on"
+                onSubmit={async (e) => {
                   e.preventDefault();
                   setAdminPassMessage(null);
                   if (adminNewPass !== adminConfirmPass) {
                     setAdminPassMessage({ type: 'error', text: 'La nueva contraseña y su confirmación no coinciden.' });
                     return;
                   }
-                  const res = changeSystemPassword(adminCurrentPass, adminNewPass);
-                  if (!res.success) {
-                    setAdminPassMessage({ type: 'error', text: res.error || 'Error al cambiar contraseña.' });
-                  } else {
-                    setAdminPassMessage({ type: 'success', text: '✓ Contraseña de acceso actualizada exitosamente.' });
-                    setAdminCurrentPass('');
-                    setAdminNewPass('');
-                    setAdminConfirmPass('');
+                  setIsSavingAdminPass(true);
+                  try {
+                    const res = await changeSystemPassword(adminCurrentPass, adminNewPass, adminUsernameInput);
+                    if (!res.success) {
+                      setAdminPassMessage({ type: 'error', text: res.error || 'Error al cambiar contraseña.' });
+                    } else {
+                      setAdminPassMessage({ type: 'success', text: 'Usuario y contraseña actualizados y guardados exitosamente.' });
+                      setAdminCurrentPass('');
+                      setAdminNewPass('');
+                      setAdminConfirmPass('');
+                    }
+                  } finally {
+                    setIsSavingAdminPass(false);
                   }
                 }}
                 className="space-y-3 text-xs"
               >
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">
-                    Contraseña Actual:
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={adminCurrentPass}
-                    onChange={(e) => setAdminCurrentPass(e.target.value)}
-                    placeholder="Contraseña actual (inicial: Gestion2629)"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">
+                      Usuario Administrador:
+                    </label>
+                    <input
+                      type="text"
+                      name="username"
+                      autoComplete="username"
+                      required
+                      minLength={3}
+                      value={adminUsernameInput}
+                      onChange={(e) => setAdminUsernameInput(e.target.value)}
+                      placeholder="Ej. admin"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-300 font-medium mb-1">
+                      Contraseña Actual:
+                    </label>
+                    <input
+                      type="password"
+                      name="current-password"
+                      autoComplete="current-password"
+                      required
+                      value={adminCurrentPass}
+                      onChange={(e) => setAdminCurrentPass(e.target.value)}
+                      placeholder="Ingrese su contraseña actual"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -897,6 +1064,8 @@ export const AdminManagement: React.FC = () => {
                     </label>
                     <input
                       type="password"
+                      name="new-password"
+                      autoComplete="new-password"
                       required
                       minLength={6}
                       value={adminNewPass}
@@ -912,6 +1081,8 @@ export const AdminManagement: React.FC = () => {
                     </label>
                     <input
                       type="password"
+                      name="confirm-new-password"
+                      autoComplete="new-password"
                       required
                       value={adminConfirmPass}
                       onChange={(e) => setAdminConfirmPass(e.target.value)}
@@ -923,10 +1094,11 @@ export const AdminManagement: React.FC = () => {
 
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer flex items-center gap-1.5"
+                  disabled={isSavingAdminPass}
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
                 >
                   <KeyRound className="w-3.5 h-3.5" />
-                  <span>Actualizar Contraseña de Acceso</span>
+                  <span>{isSavingAdminPass ? 'Guardando...' : 'Actualizar Usuario y Contraseña'}</span>
                 </button>
               </form>
             </div>
@@ -1082,7 +1254,9 @@ export const AdminManagement: React.FC = () => {
                     onChange={(e) => setDeptForm({ ...deptForm, category: e.target.value as any })}
                     className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-2 text-white focus:outline-none focus:border-sky-500"
                   >
+                    <option value="DEPENDENCIA_DEM">Dependencia Directa del D.E.M.</option>
                     <option value="SECRETARIA">Secretaría</option>
+                    <option value="DIRECCION_GENERAL">Dirección General</option>
                     <option value="DIRECCION">Dirección</option>
                     <option value="COORDINACION">Coordinación</option>
                     <option value="PUNTO_DIGITAL">Punto Digital / Área Especial</option>
@@ -1133,6 +1307,7 @@ export const AdminManagement: React.FC = () => {
                     <option value="SALUD">Salud y SAPS (Atención Sanitaria y Bromatología)</option>
                     <option value="CONTROL_URBANO">Control Urbano (Carnets, Multas, Habilitaciones y Vial)</option>
                     <option value="RRHH">Recursos Humanos (Nómina y Legajos de Personal)</option>
+                    <option value="ESCUELA_EMPRESA">Escuela Empresa (Panadería y Pastelería - D.E.M.)</option>
                   </select>
                 </div>
 
@@ -1183,16 +1358,29 @@ export const AdminManagement: React.FC = () => {
             </div>
 
             <form onSubmit={handleSaveUser} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block text-slate-300 font-medium mb-1">Nombre Completo (*)</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ej. Martín Solís"
-                  value={userForm.name}
-                  onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Usuario (*)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej. msolis"
+                    value={userForm.username}
+                    onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Nombre Completo (*)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej. Martín Solís"
+                    value={userForm.name}
+                    onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                  />
+                </div>
               </div>
 
               <div>
@@ -1208,32 +1396,44 @@ export const AdminManagement: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-300 font-medium mb-1">Rol y Permisos</label>
-                <select
-                  value={userForm.role}
-                  onChange={(e) => setUserForm({ ...userForm, role: e.target.value as any })}
+                <label className="block text-slate-300 font-medium mb-1">Contraseña Individual (opcional, mín. 6 car.)</label>
+                <input
+                  type="password"
+                  minLength={6}
+                  placeholder="Dejar vacío si no requiere clave propia"
+                  value={userForm.plainPassword}
+                  onChange={(e) => setUserForm({ ...userForm, plainPassword: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
-                >
-                  <option value="RESPONSABLE_AREA">Responsable de Área (Sector Asignado)</option>
-                  <option value="ADMIN_GENERAL">Administrador General (Acceso Total)</option>
-                  <option value="OPERADOR_AREA">Operador de Mesa de Entrada</option>
-                </select>
+                />
               </div>
 
-              {userForm.role !== 'ADMIN_GENERAL' && (
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">Área Asignada</label>
-                  <select
-                    value={userForm.departmentId}
-                    onChange={(e) => setUserForm({ ...userForm, departmentId: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
-                  >
-                    {departments.map(d => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Rol (Acceso Restringido — No Admin)</label>
+                <select
+                  value={userForm.role}
+                  onChange={(e) => setUserForm({ ...userForm, role: e.target.value as 'RESPONSABLE_AREA' | 'OPERADOR_AREA' })}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                >
+                  <option value="RESPONSABLE_AREA">Responsable de Área (Sin acceso a información)</option>
+                  <option value="OPERADOR_AREA">Operador de Mesa (Sin acceso a información)</option>
+                </select>
+                <p className="text-[10px] text-amber-300/90 mt-1">
+                  Solo existe un único Administrador General. Los demás usuarios no pueden ver información del sistema.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Área Asignada</label>
+                <select
+                  value={userForm.departmentId}
+                  onChange={(e) => setUserForm({ ...userForm, departmentId: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-500"
+                >
+                  {departments.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
 
               <div>
                 <label className="block text-slate-300 font-medium mb-1">Cargo / Designación</label>

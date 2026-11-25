@@ -15,21 +15,18 @@ import { FundsModule } from './components/funds/FundsModule';
 import { UrbanControlModule } from './components/urban-control/UrbanControlModule';
 import { HumanResourcesModule } from './components/rrhh/HumanResourcesModule';
 import { CultureEducationModule } from './components/culture/CultureEducationModule';
+import { EscuelaEmpresaModule } from './components/escuela-empresa/EscuelaEmpresaModule';
 import { LoginScreen } from './components/auth/LoginScreen';
+import { RestrictedAccessScreen } from './components/auth/RestrictedAccessScreen';
 import { Citizen } from './types';
-import { Building2, Shield, Heart } from 'lucide-react';
+import { Building2 } from 'lucide-react';
 
-const MainAppContent: React.FC = () => {
-  const { currentUser } = useAuth();
+const AuthenticatedAdminApp: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('DASHBOARD');
   
   // Cross-component state navigation
   const [citizenForTicket, setCitizenForTicket] = useState<Citizen | null>(null);
   const [targetAreaForWorkspace, setTargetAreaForWorkspace] = useState<string | undefined>(undefined);
-
-  if (!currentUser) {
-    return <LoginScreen />;
-  }
 
   const handleOpenTicketForCitizen = (citizen: Citizen) => {
     setCitizenForTicket(citizen);
@@ -91,6 +88,10 @@ const MainAppContent: React.FC = () => {
               <CultureEducationModule />
             )}
 
+            {activeTab === 'ESCUELA_EMPRESA' && (
+              <EscuelaEmpresaModule />
+            )}
+
             {activeTab === 'FUNDS' && (
               <FundsModule />
             )}
@@ -132,7 +133,7 @@ const MainAppContent: React.FC = () => {
           <div className="text-[11px] text-slate-500 flex items-center gap-4">
             <span>Ley 25.326 Protección de Datos</span>
             <span>•</span>
-            <span>SIMM v2.4 Estable</span>
+            <span>SIMM v2.5 Estable</span>
             <span>•</span>
             <span>Dirección de Modernización y Estadísticas</span>
           </div>
@@ -142,12 +143,29 @@ const MainAppContent: React.FC = () => {
   );
 };
 
+const MainAppGate: React.FC = () => {
+  const { currentUser, isAdmin } = useAuth();
+
+  if (!currentUser) {
+    return <LoginScreen />;
+  }
+
+  // Strictly block any non-admin user from loading or viewing ANY municipal information
+  if (!isAdmin) {
+    return <RestrictedAccessScreen />;
+  }
+
+  return (
+    <MunicipalDataProvider>
+      <AuthenticatedAdminApp />
+    </MunicipalDataProvider>
+  );
+};
+
 export default function App() {
   return (
     <AuthProvider>
-      <MunicipalDataProvider>
-        <MainAppContent />
-      </MunicipalDataProvider>
+      <MainAppGate />
     </AuthProvider>
   );
 }

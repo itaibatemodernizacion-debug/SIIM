@@ -12,7 +12,8 @@ import {
   CommercialLicenseRecord,
   TrafficCheckpointRecord,
   MunicipalEmployee,
-  CulturalStudent
+  CulturalStudent,
+  EscuelaEmpresaStudent
 } from '../types';
 
 export const ITA_IBATE_NEIGHBORHOODS = [
@@ -505,36 +506,48 @@ export const INITIAL_DEPARTMENTS: Department[] = [
     icon: 'Monitor',
     active: true,
     moduleType: 'PUNTO_DIGITAL'
+  },
+
+  // DEPENDENCIA DIRECTA DEL D.E.M. (Departamento Ejecutivo Municipal)
+  {
+    id: 'escuela-empresa',
+    name: 'Escuela Empresa (Panadería y Pastelería)',
+    shortName: 'Escuela Empresa',
+    category: 'DEPENDENCIA_DEM',
+    legalReference: 'Dependiente del D.E.M. (Departamento Ejecutivo Municipal)',
+    leaderTitle: 'Coordinación Escuela Empresa · D.E.M.',
+    leaderName: 'Prof. Patricia Elizabeth Ramírez',
+    leaderDni: '29.654.112',
+    leaderEmail: 'escuelaempresa@itaibate.gob.ar',
+    phone: '3781-420145',
+    color: 'amber',
+    icon: 'ChefHat',
+    active: true,
+    moduleType: 'ESCUELA_EMPRESA'
   }
 ];
 
 export const INITIAL_USERS: MunicipalUser[] = [
   {
     id: 'user-admin',
-    name: 'Intendente / Administrador General',
-    email: 'intendencia@itaibate.gob.ar',
-    role: 'ADMIN_GENERAL',
-    position: 'Intendente Municipal',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80'
-  },
-  {
-    id: 'user-modernizacion',
-    name: 'Ing. Javier Soto',
+    username: 'admin',
+    name: 'Administrador General',
     email: 'itaibatemodernizacion@gmail.com',
     role: 'ADMIN_GENERAL',
-    departmentId: 'dir-gen-modernizacion',
-    position: 'Director General de Modernización y Estadísticas'
+    position: 'Administrador General del Sistema Municipal'
   },
   {
     id: 'user-gabinete',
+    username: 'gabinete',
     name: 'Dr. Marcos Ramírez',
     email: 'gabinete@itaibate.gob.ar',
-    role: 'ADMIN_GENERAL',
+    role: 'RESPONSABLE_AREA',
     departmentId: 'sec-jefatura-gabinete',
     position: 'Secretario Jefe de Gabinete'
   },
   {
     id: 'user-obras',
+    username: 'obras',
     name: 'Ing. Carlos Aguirre',
     email: 'obras@itaibate.gob.ar',
     role: 'RESPONSABLE_AREA',
@@ -543,6 +556,7 @@ export const INITIAL_USERS: MunicipalUser[] = [
   },
   {
     id: 'user-social',
+    username: 'social',
     name: 'Lic. Silvina Fernández',
     email: 'accionsocial@itaibate.gob.ar',
     role: 'RESPONSABLE_AREA',
@@ -551,6 +565,7 @@ export const INITIAL_USERS: MunicipalUser[] = [
   },
   {
     id: 'user-asistencia-social',
+    username: 'asistenciasocial',
     name: 'Lic. Matías Meza',
     email: 'asistenciasocial@itaibate.gob.ar',
     role: 'RESPONSABLE_AREA',
@@ -559,6 +574,7 @@ export const INITIAL_USERS: MunicipalUser[] = [
   },
   {
     id: 'user-deportes',
+    username: 'deportes',
     name: 'Prof. Rolando Morales',
     email: 'deportes@itaibate.gob.ar',
     role: 'RESPONSABLE_AREA',
@@ -567,6 +583,7 @@ export const INITIAL_USERS: MunicipalUser[] = [
   },
   {
     id: 'user-punto-digital',
+    username: 'puntodigital',
     name: 'Andrea Romero',
     email: 'puntodigital@itaibate.gob.ar',
     role: 'OPERADOR_AREA',
@@ -2503,4 +2520,89 @@ export const INITIAL_CULTURAL_STUDENTS: CulturalStudent[] = [
     createdAt: '2026-03-16 09:00'
   }
 ];
+
+export const INITIAL_ESCUELA_EMPRESA_STUDENTS: EscuelaEmpresaStudent[] = [
+  {
+    id: 'ee-1',
+    enrollmentNumber: 'EE-2026-001',
+    fullName: 'Gladys Beatriz Fernández',
+    dni: '33.482.190',
+    birthDate: '1988-04-12',
+    age: 38,
+    phone: '3781-441209',
+    email: 'gladys.fernandez@mail.com',
+    address: 'Calle Belgrano 510',
+    neighborhood: 'Medalla Milagrosa',
+    specialty: 'PANADERIA_Y_PASTELERIA',
+    shift: 'TARDE',
+    level: 'INICIAL',
+    instructorName: 'Chef Past. Patricia Ramírez',
+    hasFoodHandlingCert: true,
+    enrollmentDate: '2026-03-18',
+    status: 'ACTIVO',
+    notes: 'Emprendedora barrial interesada en panificados artesanales y tortas por encargo.',
+    createdAt: '2026-03-18 14:30'
+  },
+  {
+    id: 'ee-2',
+    enrollmentNumber: 'EE-2026-002',
+    fullName: 'Cristian Ariel Benítez',
+    dni: '39.112.645',
+    birthDate: '1996-09-25',
+    age: 30,
+    phone: '3781-462388',
+    address: 'Av. San Martín 740',
+    neighborhood: 'San Baltazar',
+    specialty: 'PANADERIA',
+    shift: 'MANANA',
+    level: 'INTERMEDIO',
+    instructorName: 'Mtro. Panadero Héctor Gómez',
+    hasFoodHandlingCert: true,
+    enrollmentDate: '2026-03-19',
+    status: 'ACTIVO',
+    notes: 'Especialización en pan francés, facturas y masas fermentadas.',
+    createdAt: '2026-03-19 09:15'
+  },
+  {
+    id: 'ee-3',
+    enrollmentNumber: 'EE-2026-003',
+    fullName: 'Romina Soledad Aquino',
+    dni: '41.890.312',
+    birthDate: '1999-11-04',
+    age: 27,
+    phone: '3781-480912',
+    address: 'Calle Santa Catalina Mz C C 8',
+    neighborhood: 'Santa Catalina',
+    specialty: 'PASTELERIA',
+    shift: 'TARDE',
+    level: 'AVANZADO',
+    instructorName: 'Chef Past. Patricia Ramírez',
+    hasFoodHandlingCert: true,
+    enrollmentDate: '2026-03-20',
+    status: 'REGULAR',
+    notes: 'Prácticas en pastelería fina, mesas dulces y decoración para eventos.',
+    createdAt: '2026-03-20 16:00'
+  },
+  {
+    id: 'ee-4',
+    enrollmentNumber: 'EE-2026-004',
+    fullName: 'Mónica Alejandra Lugo',
+    dni: '31.705.224',
+    birthDate: '1985-07-19',
+    age: 41,
+    phone: '3781-419844',
+    address: 'Calle San Roque 225',
+    neighborhood: 'San Roque',
+    specialty: 'PANADERIA_Y_PASTELERIA',
+    shift: 'NOCHE',
+    level: 'INICIAL',
+    instructorName: 'Mtro. Panadero Héctor Gómez',
+    hasFoodHandlingCert: false,
+    enrollmentDate: '2026-03-22',
+    status: 'ACTIVO',
+    notes: 'Pendiente curso municipal de carnet de manipulación de alimentos.',
+    createdAt: '2026-03-22 19:20'
+  }
+];
+
 

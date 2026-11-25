@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useMunicipalData } from '../../context/MunicipalDataContext';
 import { useAuth } from '../../context/AuthContext';
 import { ITA_IBATE_NEIGHBORHOODS } from '../../data/initialData';
@@ -11,14 +11,18 @@ import {
   PlusCircle, 
   Medal, 
   Download, 
+  Upload,
   Filter, 
   Search, 
   CheckCircle2, 
   Activity, 
   X,
-  UserCheck
+  UserCheck,
+  FileSpreadsheet,
+  AlertTriangle
 } from 'lucide-react';
-import { exportSportsToExcel } from '../../lib/excelUtils';
+import { exportSportsToExcel, parseUploadedSectorFile } from '../../lib/excelUtils';
+import { getTemplateConfigForDepartment, downloadTemplateFromConfig } from '../../lib/sectorTemplates';
 
 const SPORT_DISCIPLINES = [
   'Pesca Deportiva',
@@ -47,20 +51,28 @@ const SPORT_LOCATIONS = [
 
 export const SportsModule: React.FC = () => {
   const { 
+    departments,
     sportsEvents, 
     sportsParticipants, 
     addSportEvent, 
     updateSportEvent, 
     addSportParticipant,
-    findCitizenByDni 
+    findCitizenByDni,
+    importSectorWorkbook
   } = useMunicipalData();
 
   const { maskSensitiveData } = useAuth();
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   const [activeTab, setActiveTab] = useState<'EVENTS' | 'PARTICIPANTS' | 'STATS'>('EVENTS');
   const [selectedEventId, setSelectedEventId] = useState<string>('ALL');
   const [selectedDisciplineFilter, setSelectedDisciplineFilter] = useState<string>('ALL');
   const [searchParticipant, setSearchParticipant] = useState('');
+  const [importFeedback, setImportFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+    warnings?: string[];
+  } | null>(null);
 
   // Modals
   const [showNewEventModal, setShowNewEventModal] = useState(false);
@@ -227,6 +239,53 @@ export const SportsModule: React.FC = () => {
     return `${clean.substring(0, 2)}.${'*'.repeat(3)}.${clean.substring(clean.length - 3)}`;
   };
 
+  const handleDownloadSportsTemplate = () => {
+    const sportsDept = departments.find(d => d.id === 'dir-deportes') || {
+      id: 'dir-deportes',
+      name: 'Dirección General de Deportes y Recreación',
+      shortName: 'Deportes y Recreación',
+      category: 'DIRECCION_GENERAL' as const,
+      leaderName: 'Prof. Rolando Morales',
+      leaderEmail: 'deportes@itaibate.gob.ar',
+      color: 'orange',
+      icon: 'Trophy',
+      active: true,
+      moduleType: 'DEPORTES' as const
+    };
+    const config = getTemplateConfigForDepartment(sportsDept);
+    downloadTemplateFromConfig(config);
+  };
+
+  const handleSportsExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await parseUploadedSectorFile(file, 'dir-deportes');
+      if (parsed.totalDetected === 0) {
+        setImportFeedback({
+          type: 'error',
+          message: `No se detectaron deportistas válidos en "${file.name}". Utilice el Modelo Excel de Deportes con Tutores.`
+        });
+      } else {
+        const res = importSectorWorkbook(parsed, 'dir-deportes', file.name, 'EXCEL_LOCAL');
+        const minorsCount = parsed.sportRows.filter(r => r.isMinor).length;
+        setImportFeedback({
+          type: 'success',
+          message: `Planilla "${file.name}" procesada: +${res.added} deportistas incorporados, ${res.updated} actualizados, ${res.duplicates} duplicados omitidos (${minorsCount} menores con datos de tutor).`,
+          warnings: parsed.warnings
+        });
+        setActiveTab('PARTICIPANTS');
+      }
+    } catch (err: any) {
+      setImportFeedback({
+        type: 'error',
+        message: err.message || 'Error al procesar el archivo Excel de Deportes.'
+      });
+    } finally {
+      if (importFileRef.current) importFileRef.current.value = '';
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Title & Actions Bar */}
@@ -245,7 +304,33 @@ export const SportsModule: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="file"
+            ref={importFileRef}
+            onChange={handleSportsExcelUpload}
+            accept=".xlsx, .xls, .csv"
+            className="hidden"
+          />
+
+          <button
+            onClick={handleDownloadSportsTemplate}
+            className="flex items-center gap-1.5 px-3 py-2 bg-emerald-950/70 hover:bg-emerald-800 text-emerald-300 hover:text-white border border-emerald-500/40 rounded-xl text-xs font-semibold transition cursor-pointer"
+            title="Descargar planilla Excel modelo de Deportes con columnas de Tutor para menores de edad"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Modelo Excel (c/ Tutores)</span>
+          </button>
+
+          <button
+            onClick={() => importFileRef.current?.click()}
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-sky-300 border border-sky-500/30 rounded-xl text-xs font-semibold transition cursor-pointer"
+            title="Cargar planilla Excel de Deportes"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>Importar Excel</span>
+          </button>
+
           <button
             onClick={() => exportSportsToExcel(sportsParticipants)}
             className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition cursor-pointer"
@@ -276,6 +361,38 @@ export const SportsModule: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {importFeedback && (
+        <div className={`rounded-2xl p-4 text-xs border flex items-start justify-between gap-3 ${
+          importFeedback.type === 'success'
+            ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-200'
+            : 'bg-rose-950/70 border-rose-500/40 text-rose-200'
+        }`}>
+          <div className="flex items-start gap-2.5">
+            {importFeedback.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            )}
+            <div className="space-y-1">
+              <p className="font-semibold">{importFeedback.message}</p>
+              {importFeedback.warnings && importFeedback.warnings.length > 0 && (
+                <div className="text-amber-300 text-[11px] space-y-0.5">
+                  {importFeedback.warnings.slice(0, 4).map((w, idx) => (
+                    <div key={idx}>• {w}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={() => setImportFeedback(null)}
+            className="text-slate-300 hover:text-white font-semibold cursor-pointer"
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
 
       {/* KPI Cards for Sports */}
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">

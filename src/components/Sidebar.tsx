@@ -11,7 +11,8 @@ import {
   Layers,
   DollarSign,
   IdCard,
-  GraduationCap
+  GraduationCap,
+  ChefHat
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useMunicipalData } from '../context/MunicipalDataContext';
@@ -23,6 +24,7 @@ export type ActiveTab =
   | 'CONTROL_URBANO'
   | 'RRHH'
   | 'CULTURE'
+  | 'ESCUELA_EMPRESA'
   | 'FUNDS'
   | 'SPORTS' 
   | 'AREAS' 
@@ -37,7 +39,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
   const { currentUser, isAdmin } = useAuth();
-  const { kpis, departments, financialKPIs, urbanControlKPIs, employeeKPIs, culturalKPIs } = useMunicipalData();
+  const { kpis, departments, financialKPIs, urbanControlKPIs, employeeKPIs, culturalKPIs, escuelaEmpresaKPIs } = useMunicipalData();
 
   const userDept = departments.find(d => d.id === currentUser?.departmentId);
 
@@ -83,6 +85,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
       icon: GraduationCap,
       badge: `${culturalKPIs.totalStudents} al.`,
       badgeColor: 'bg-pink-500/20 text-pink-300 border border-pink-500/30'
+    },
+    {
+      id: 'ESCUELA_EMPRESA',
+      label: 'Escuela Empresa',
+      icon: ChefHat,
+      badge: `${escuelaEmpresaKPIs.totalStudents} al.`,
+      badgeColor: 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
     },
     {
       id: 'FUNDS',
