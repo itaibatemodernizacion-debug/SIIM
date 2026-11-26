@@ -1,6 +1,12 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/drive/public/*"
+  to = "/.netlify/functions/drive-public"
+  status = 200
 
 [[redirects]]
   from = "/*"

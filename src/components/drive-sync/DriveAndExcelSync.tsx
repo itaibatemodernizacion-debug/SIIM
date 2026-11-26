@@ -62,7 +62,6 @@ import {
   isFolder,
   isGoogleSheet
 } from '../../lib/googleDriveService';
-import { firebaseApiKey } from '../../lib/firebase';
 import { syncStateToFirestore, loadStateFromFirestore } from '../../lib/firestoreSync';
 import { EmptyDatabaseModal } from '../common/EmptyDatabaseModal';
 
@@ -97,7 +96,7 @@ const LINKED_FOLDER_UNLINKED_KEY = 'ita_ibate_drive_folder_unlinked';
 
 const DEFAULT_OFFICIAL_DRIVE_FOLDER: LinkedDriveFolderConfig = {
   folderId: '1vEK1_NJyTDky42GIW_T0u6SCBXTaPNJv',
-  folderName: 'Planillas Oficiales Itá Ibaté (Google Drive)',
+  folderName: 'Sistema de Gestión',
   folderUrl: 'https://drive.google.com/drive/folders/1vEK1_NJyTDky42GIW_T0u6SCBXTaPNJv?usp=sharing',
   linkedByEmail: 'itaibatemodernizacion@gmail.com',
   autoSyncOnConnect: true,
@@ -126,9 +125,14 @@ const loadStoredLinkedFolder = (): LinkedDriveFolderConfig | null => {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed.folderId === 'string' && parsed.folderId.trim()) {
+        const defaultNameUpgrade =
+          parsed.folderId === DEFAULT_OFFICIAL_DRIVE_FOLDER.folderId &&
+          (!parsed.folderName || parsed.folderName === 'Planillas Oficiales Itá Ibaté (Google Drive)');
         return {
           folderId: parsed.folderId,
-          folderName: parsed.folderName || 'Carpeta Oficial Municipal',
+          folderName: defaultNameUpgrade
+            ? DEFAULT_OFFICIAL_DRIVE_FOLDER.folderName
+            : parsed.folderName || 'Carpeta Oficial Municipal',
           folderUrl: parsed.folderUrl,
           linkedByEmail: parsed.linkedByEmail,
           autoSyncOnConnect: parsed.autoSyncOnConnect !== false,
@@ -195,11 +199,10 @@ export const DriveAndExcelSync: React.FC = () => {
   const currentFolder = folderStack[folderStack.length - 1];
 
   const resolveDriveAuth = useCallback(
-    (tokenOverride?: string): DriveAuthCredentials | null => {
+    (tokenOverride?: string): DriveAuthCredentials => {
       const token = tokenOverride || googleToken;
       if (token) return { accessToken: token };
-      if (firebaseApiKey) return { apiKey: firebaseApiKey };
-      return null;
+      return { publicProxy: true };
     },
     [googleToken]
   );
@@ -301,7 +304,7 @@ export const DriveAndExcelSync: React.FC = () => {
   useEffect(() => {
     if (googleToken) {
       loadDriveFiles(googleToken, currentFolder.id, driveSearch, false);
-    } else if (linkedFolder && currentFolder.id !== 'ROOT' && firebaseApiKey) {
+    } else if (linkedFolder && currentFolder.id !== 'ROOT') {
       loadDriveFiles(undefined, currentFolder.id, '', true);
     } else {
       setDriveFiles([]);
