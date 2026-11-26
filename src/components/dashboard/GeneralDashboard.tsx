@@ -17,18 +17,23 @@ import {
   AlertTriangle,
   Award,
   Zap,
-  Activity
+  Activity,
+  Trash2
 } from 'lucide-react';
+import { EmptyDatabaseModal } from '../common/EmptyDatabaseModal';
 
 export const GeneralDashboard: React.FC<{ 
   onNavigateToTickets: () => void;
   onNavigateToSports: () => void;
   onNavigateToAreas: (deptId?: string) => void;
+  onNavigateToDrive?: () => void;
 }> = ({
   onNavigateToTickets,
   onNavigateToSports,
-  onNavigateToAreas
+  onNavigateToAreas,
+  onNavigateToDrive
 }) => {
+  const [showEmptyDbModal, setShowEmptyDbModal] = React.useState(false);
   const { 
     kpis, 
     departmentKPIs, 
@@ -91,19 +96,37 @@ export const GeneralDashboard: React.FC<{
           </p>
         </div>
 
-        {/* Quick Resolution Gauge Banner */}
-        <div className="flex items-center gap-3 bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800/80">
-          <div className="w-12 h-12 rounded-full bg-emerald-500/10 border-2 border-emerald-500/40 flex items-center justify-center">
-            <span className="text-sm font-extrabold text-emerald-400">{kpis.resolutionRate}%</span>
-          </div>
-          <div>
-            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Eficacia de Gestión</div>
-            <div className="text-xs font-bold text-slate-200">
-              {kpis.resolvedTickets} de {kpis.totalTickets} solicitudes resueltas
+        {/* Quick Actions & Resolution Gauge Banner */}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowEmptyDbModal(true)}
+            className="flex items-center gap-2 px-3.5 py-2.5 bg-rose-950/70 hover:bg-rose-600 text-rose-200 hover:text-white border border-rose-500/40 rounded-xl text-xs font-bold shadow-sm transition cursor-pointer"
+            title="Vaciar los datos demo para comenzar a trabajar con Google Drive"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Vaciar Base de Datos</span>
+          </button>
+
+          <div className="flex items-center gap-3 bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800/80">
+            <div className="w-12 h-12 rounded-full bg-emerald-500/10 border-2 border-emerald-500/40 flex items-center justify-center">
+              <span className="text-sm font-extrabold text-emerald-400">{kpis.resolutionRate}%</span>
+            </div>
+            <div>
+              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Eficacia de Gestión</div>
+              <div className="text-xs font-bold text-slate-200">
+                {kpis.resolvedTickets} de {kpis.totalTickets} solicitudes resueltas
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <EmptyDatabaseModal
+        isOpen={showEmptyDbModal}
+        onClose={() => setShowEmptyDbModal(false)}
+        onGoToDrive={onNavigateToDrive}
+      />
 
       {/* Interactive Filter Bar */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">

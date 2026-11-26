@@ -60,6 +60,7 @@ const AuthenticatedAdminApp: React.FC = () => {
                 onNavigateToTickets={() => setActiveTab('TICKETS')}
                 onNavigateToSports={() => setActiveTab('SPORTS')}
                 onNavigateToAreas={handleNavigateToAreas}
+                onNavigateToDrive={() => setActiveTab('DRIVE_SYNC')}
               />
             )}
 

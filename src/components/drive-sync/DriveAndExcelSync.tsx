@@ -62,6 +62,7 @@ import {
   isGoogleSheet
 } from '../../lib/googleDriveService';
 import { syncStateToFirestore, loadStateFromFirestore } from '../../lib/firestoreSync';
+import { EmptyDatabaseModal } from '../common/EmptyDatabaseModal';
 
 interface PreviewState {
   fileName: string;
@@ -152,6 +153,7 @@ export const DriveAndExcelSync: React.FC = () => {
   const [isSyncingFolder, setIsSyncingFolder] = useState(false);
   const [syncProgressText, setSyncProgressText] = useState<string | null>(null);
   const [folderSyncReport, setFolderSyncReport] = useState<FolderSyncReport | null>(null);
+  const [showEmptyDbModal, setShowEmptyDbModal] = useState(false);
 
   // Google Drive Explorer State
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
@@ -722,14 +724,40 @@ export const DriveAndExcelSync: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={() => selectedDept && downloadDepartmentTemplate(selectedDept)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer self-start lg:self-auto shrink-0"
-        >
-          <Download className="w-4 h-4" />
-          <span>Descargar Modelo: {selectedDept?.shortName}</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowEmptyDbModal(true)}
+            className="flex items-center gap-2 px-3.5 py-2.5 bg-rose-950/70 hover:bg-rose-600 text-rose-200 hover:text-white border border-rose-500/40 rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
+            title="Vacía todos los datos de prueba para iniciar a cargar desde Google Drive (conserva autoridades y organigrama)"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Vaciar Base de Datos</span>
+          </button>
+
+          <button
+            onClick={() => selectedDept && downloadDepartmentTemplate(selectedDept)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
+          >
+            <Download className="w-4 h-4" />
+            <span>Descargar Modelo: {selectedDept?.shortName}</span>
+          </button>
+        </div>
       </div>
+
+      <EmptyDatabaseModal
+        isOpen={showEmptyDbModal}
+        onClose={() => setShowEmptyDbModal(false)}
+        onCleared={() => {
+          setParsedPreview(null);
+          setImportSummary(null);
+          setFolderSyncReport(null);
+          if (linkedFolder) {
+            setLinkedFolder({ ...linkedFolder, syncedFilesMap: {}, lastSyncedAt: undefined });
+          }
+          setStatusNotice('Base de datos vaciada por completo. Ya puede conectar Google Drive y sincronizar sus planillas reales.');
+        }}
+      />
 
       {/* SECTION 0 (PRIMARY): Linked Official Google Drive Folder */}
       <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-sky-950/30 border border-sky-500/30 rounded-2xl p-5 shadow-md space-y-4">

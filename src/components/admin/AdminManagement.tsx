@@ -27,6 +27,7 @@ import {
   Trash,
   ChefHat
 } from 'lucide-react';
+import { EmptyDatabaseModal } from '../common/EmptyDatabaseModal';
 
 export const AdminManagement: React.FC = () => {
   const { 
@@ -55,6 +56,7 @@ export const AdminManagement: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'AREAS' | 'ORGANIGRAMA' | 'USERS' | 'AUDIT' | 'BACKUP'>('ORGANIGRAMA');
   const [adminNotice, setAdminNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [showEmptyDbModal, setShowEmptyDbModal] = useState(false);
 
   // Password & username modification state in Admin
   const [adminUsernameInput, setAdminUsernameInput] = useState(adminUsername);
@@ -936,27 +938,19 @@ export const AdminManagement: React.FC = () => {
                 </button>
 
                 <button
-                  onClick={() => {
-                    const confirmClean = window.confirm(
-                      '⚠️ ¿CONFIRMA LA LIMPIEZA DE DATOS DEMO?\n\nEsta acción eliminará todos los trámites, atenciones, fondos, gastos, multas, carnets y participantes de prueba para dejar el sistema listo para operar en PRODUCCIÓN con datos reales.\n\nEl organigrama oficial y las autoridades a cargo se mantendrán.'
-                    );
-                    if (confirmClean) {
-                      clearDemoData();
-                      alert('✓ Datos demo purgados exitosamente. El sistema está limpio y listo para producción.');
-                    }
-                  }}
+                  type="button"
+                  onClick={() => setShowEmptyDbModal(true)}
                   className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Trash className="w-3.5 h-3.5" />
-                  <span>Limpiar Datos Demo (Iniciar en Limpio)</span>
+                  <span>Vaciar Base de Datos (Iniciar en Limpio)</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => {
-                    if (confirm('¿Desea restablecer los datos de muestra iniciales con ejemplos de todas las áreas?')) {
-                      resetAllData();
-                      alert('✓ Datos de demostración restablecidos.');
-                    }
+                    resetAllData();
+                    setAdminNotice({ type: 'success', text: 'Datos de demostración restablecidos (sus autoridades y organigrama se conservaron).' });
                   }}
                   className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer flex items-center gap-1.5"
                 >
@@ -965,6 +959,17 @@ export const AdminManagement: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            <EmptyDatabaseModal
+              isOpen={showEmptyDbModal}
+              onClose={() => setShowEmptyDbModal(false)}
+              onCleared={() => {
+                setAdminNotice({
+                  type: 'success',
+                  text: 'Base de datos vaciada exitosamente. El sistema quedó en cero y listo para conectar con Google Drive.'
+                });
+              }}
+            />
 
             {/* Card 2: Usuario y Contraseña de Acceso del Administrador Único */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">

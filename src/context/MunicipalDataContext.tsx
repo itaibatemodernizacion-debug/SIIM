@@ -2189,7 +2189,8 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const clearDemoData = () => {
-    // Purges all operational demo data leaving a clean, production-ready system
+    // Purges all operational/demo data leaving a clean, production-ready database
+    // Preserves customized Secretaries, Directors & Coordinators (departments), expenseCategories, and Admin credentials
     setCitizens([]);
     setTickets([]);
     setSportsEvents([]);
@@ -2205,7 +2206,21 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     setCulturalStudents([]);
     setEscuelaEmpresaStudents([]);
     setSyncLogs([]);
-    
+
+    const nowTs = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const cleanAudit: AuditLog[] = [
+      {
+        id: `aud-${Date.now()}`,
+        timestamp: nowTs,
+        userName: currentUser?.name || 'Administrador General',
+        userRole: currentUser?.role || 'ADMIN_GENERAL',
+        action: 'VACIADO_BASE_DATOS',
+        entity: 'SISTEMA',
+        details: 'Base de datos vaciada para iniciar en producción con Google Drive. Se conservaron autoridades y organigrama.'
+      }
+    ];
+    setAuditLogs(cleanAudit);
+
     localStorage.setItem(STORAGE_KEYS.CITIZENS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.TICKETS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.SPORTS_EVENTS, JSON.stringify([]));
@@ -2221,8 +2236,27 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     localStorage.setItem(STORAGE_KEYS.CULTURAL_STUDENTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.ESCUELA_EMPRESA_STUDENTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.SYNC_LOGS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(cleanAudit));
 
-    logAudit('LIMPIEZA_SISTEMA', 'CONFIGURACION', 'Se purgaron todos los datos de prueba y demostración. El sistema inicia en producción.');
+    // Reset tracked syncedFilesMap on linked Google Drive folder (keeping folder link intact)
+    // so the next Google Drive sync imports all real spreadsheets fresh into the empty DB
+    try {
+      const linkedRaw = localStorage.getItem('ita_ibate_linked_drive_folder');
+      if (linkedRaw) {
+        const parsedFolder = JSON.parse(linkedRaw);
+        if (parsedFolder && parsedFolder.folderId) {
+          const resetFolder = {
+            ...parsedFolder,
+            syncedFilesMap: {},
+            lastSyncedAt: undefined
+          };
+          localStorage.setItem('ita_ibate_linked_drive_folder', JSON.stringify(resetFolder));
+          syncStateToFirestore({ linkedDriveFolder: resetFolder }).catch(() => {});
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
   };
 
   // Filtered tickets
