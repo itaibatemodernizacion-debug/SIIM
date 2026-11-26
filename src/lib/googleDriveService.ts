@@ -8,6 +8,11 @@ export interface DriveFileItem {
   parents?: string[];
 }
 
+export type DriveAuthCredentials =
+  | string
+  | { accessToken: string }
+  | { apiKey: string };
+
 export const DRIVE_MIME_TYPES = {
   FOLDER: 'application/vnd.google-apps.folder',
   GOOGLE_SHEET: 'application/vnd.google-apps.spreadsheet',
@@ -18,6 +23,29 @@ export const DRIVE_MIME_TYPES = {
 
 export const isFolder = (mimeType: string) => mimeType === DRIVE_MIME_TYPES.FOLDER;
 export const isGoogleSheet = (mimeType: string) => mimeType === DRIVE_MIME_TYPES.GOOGLE_SHEET;
+
+const resolveDriveAuth = (
+  auth: DriveAuthCredentials
+): { mode: 'oauth'; token: string } | { mode: 'apikey'; apiKey: string } => {
+  if (typeof auth === 'string') {
+    return { mode: 'oauth', token: auth };
+  }
+  if ('accessToken' in auth) {
+    return { mode: 'oauth', token: auth.accessToken };
+  }
+  return { mode: 'apikey', apiKey: auth.apiKey };
+};
+
+const fetchDrive = (baseUrl: string, params: URLSearchParams, auth: DriveAuthCredentials) => {
+  const resolved = resolveDriveAuth(auth);
+  if (resolved.mode === 'apikey') {
+    params.set('key', resolved.apiKey);
+    return fetch(`${baseUrl}?${params.toString()}`);
+  }
+  return fetch(`${baseUrl}?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${resolved.token}` }
+  });
+};
 
 /**
  * Extracts a Google Drive or Google Sheets File ID from either a full URL or raw ID string.
@@ -42,18 +70,31 @@ export const extractDriveFileId = (urlOrId: string): string | null => {
   return null;
 };
 
-const handleDriveResponseError = async (res: Response): Promise<never> => {
-  if (res.status === 401 || res.status === 403) {
-    throw new Error('AUTH_EXPIRED: Su sesión o permiso de Google Drive expiró. Haga clic en "Conectar con Google" para renovar el acceso.');
-  }
-  let msg = `Error de Google Drive (${res.status})`;
+const handleDriveResponseError = async (res: Response, isPublicMode: boolean): Promise<never> => {
+  let apiMessage = '';
   try {
     const errJson = await res.json();
-    if (errJson?.error?.message) msg = errJson.error.message;
+    if (errJson?.error?.message) apiMessage = errJson.error.message;
   } catch {
-    // ignore
+    // ignore JSON parse issues
   }
-  throw new Error(msg);
+
+  if (isPublicMode) {
+    if (res.status === 401 || res.status === 403 || res.status === 404) {
+      throw new Error(
+        'PUBLIC_ACCESS_DENIED: Esta carpeta de Google Drive requiere permiso público de lectura ("Cualquier persona con el enlace: Lector") o iniciar sesión con Google. Haga clic en "Sign in with Google" para acceder directamente con su cuenta.'
+      );
+    }
+    throw new Error(apiMessage || `Error al leer carpeta compartida (${res.status})`);
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      'AUTH_EXPIRED: Su sesión o permiso de Google Drive expiró o no tiene acceso a esta carpeta. Haga clic en "Sign in with Google" para renovar el acceso.'
+    );
+  }
+
+  throw new Error(apiMessage || `Error de Google Drive (${res.status})`);
 };
 
 export interface DriveFileWithFolder {
@@ -64,11 +105,14 @@ export interface DriveFileWithFolder {
 
 /**
  * Lists folders and spreadsheet/Excel files in Google Drive.
+ * Supports both authenticated OAuth tokens and public shared folders via API key.
  */
 export const listDriveSpreadsheetsAndFolders = async (
-  accessToken: string,
+  auth: DriveAuthCredentials,
   options?: { folderId?: string; searchText?: string }
 ): Promise<DriveFileItem[]> => {
+  const isPublicMode = resolveDriveAuth(auth).mode === 'apikey';
+
   const mimeConditions = [
     `mimeType='${DRIVE_MIME_TYPES.FOLDER}'`,
     `mimeType='${DRIVE_MIME_TYPES.GOOGLE_SHEET}'`,
@@ -83,7 +127,7 @@ export const listDriveSpreadsheetsAndFolders = async (
 
   if (options?.folderId && options.folderId !== 'ROOT') {
     qParts.push(`'${options.folderId}' in parents`);
-  } else if (options?.folderId === 'ROOT' && !hasSearch) {
+  } else if (options?.folderId === 'ROOT' && !hasSearch && !isPublicMode) {
     qParts.push(`'root' in parents`);
   }
 
@@ -101,12 +145,10 @@ export const listDriveSpreadsheetsAndFolders = async (
     includeItemsFromAllDrives: 'true'
   });
 
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`, {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
+  const res = await fetchDrive('https://www.googleapis.com/drive/v3/files', params, auth);
 
   if (!res.ok) {
-    await handleDriveResponseError(res);
+    await handleDriveResponseError(res, isPublicMode);
   }
 
   const data = await res.json();
@@ -117,7 +159,7 @@ export const listDriveSpreadsheetsAndFolders = async (
  * Recursively lists all Excel/CSV/Google Sheets files inside a linked Google Drive folder (and its subfolders).
  */
 export const listAllSpreadsheetsInFolderRecursive = async (
-  accessToken: string,
+  auth: DriveAuthCredentials,
   rootFolderId: string,
   rootFolderName = 'Carpeta Municipal',
   maxDepth = 2
@@ -129,7 +171,7 @@ export const listAllSpreadsheetsInFolderRecursive = async (
     if (visitedFolders.has(folderId)) return;
     visitedFolders.add(folderId);
 
-    const items = await listDriveSpreadsheetsAndFolders(accessToken, { folderId });
+    const items = await listDriveSpreadsheetsAndFolders(auth, { folderId });
     const subfolders: DriveFileItem[] = [];
 
     for (const item of items) {
@@ -156,23 +198,22 @@ export const listAllSpreadsheetsInFolderRecursive = async (
 };
 
 /**
- * Fetches metadata for a single file in Google Drive.
+ * Fetches metadata for a single file or folder in Google Drive.
  */
 export const getDriveFileMetadata = async (
-  accessToken: string,
+  auth: DriveAuthCredentials,
   fileId: string
 ): Promise<DriveFileItem> => {
+  const isPublicMode = resolveDriveAuth(auth).mode === 'apikey';
   const params = new URLSearchParams({
     fields: 'id,name,mimeType,modifiedTime,size,webViewLink,parents',
     supportsAllDrives: 'true'
   });
 
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?${params.toString()}`, {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
+  const res = await fetchDrive(`https://www.googleapis.com/drive/v3/files/${fileId}`, params, auth);
 
   if (!res.ok) {
-    await handleDriveResponseError(res);
+    await handleDriveResponseError(res, isPublicMode);
   }
 
   return (await res.json()) as DriveFileItem;
@@ -182,24 +223,28 @@ export const getDriveFileMetadata = async (
  * Downloads an Excel/CSV file directly or exports a Google Sheet as .xlsx ArrayBuffer.
  */
 export const downloadDriveSpreadsheetBuffer = async (
-  accessToken: string,
+  auth: DriveAuthCredentials,
   file: Pick<DriveFileItem, 'id' | 'name' | 'mimeType'>
 ): Promise<ArrayBuffer> => {
-  let url = '';
+  const isPublicMode = resolveDriveAuth(auth).mode === 'apikey';
+  let baseUrl = '';
+  const params = new URLSearchParams();
+
   if (file.mimeType === DRIVE_MIME_TYPES.GOOGLE_SHEET) {
     // Export native Google Sheet as .xlsx
-    url = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=${encodeURIComponent(DRIVE_MIME_TYPES.XLSX)}`;
+    baseUrl = `https://www.googleapis.com/drive/v3/files/${file.id}/export`;
+    params.set('mimeType', DRIVE_MIME_TYPES.XLSX);
   } else {
     // Download raw uploaded Excel (.xlsx/.xls) or CSV
-    url = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media&supportsAllDrives=true`;
+    baseUrl = `https://www.googleapis.com/drive/v3/files/${file.id}`;
+    params.set('alt', 'media');
+    params.set('supportsAllDrives', 'true');
   }
 
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
+  const res = await fetchDrive(baseUrl, params, auth);
 
   if (!res.ok) {
-    await handleDriveResponseError(res);
+    await handleDriveResponseError(res, isPublicMode);
   }
 
   return await res.arrayBuffer();

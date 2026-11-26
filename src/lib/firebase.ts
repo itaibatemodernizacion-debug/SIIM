@@ -1,33 +1,27 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  onAuthStateChanged, 
+import {
+  getAuth,
+  signInWithPopup,
+  GoogleAuthProvider,
+  onAuthStateChanged,
   signOut,
-  User 
+  User
 } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 let firebaseApp: any = null;
 let firebaseAuth: any = null;
 let firestoreDb: Firestore | null = null;
 let googleProvider: GoogleAuthProvider | null = null;
 let cachedAccessToken: string | null = null;
+let isSigningIn = false;
+
+export const firebaseApiKey: string = firebaseConfig.apiKey || '';
 
 try {
-  // Try importing or setting from config
-  const config = {
-    projectId: "ai-studio-applet-webapp-4c158",
-    appId: "1:167330302600:web:22a486503e8d57fc0a6d3d",
-    apiKey: "AIzaSyDroTwXoIz-a_u4-CWLR9Sx_U0Pxv7kv-E",
-    authDomain: "ai-studio-applet-webapp-4c158.firebaseapp.com",
-    storageBucket: "ai-studio-applet-webapp-4c158.firebasestorage.app",
-    messagingSenderId: "167330302600"
-  };
-
   if (!getApps().length) {
-    firebaseApp = initializeApp(config);
+    firebaseApp = initializeApp(firebaseConfig);
   } else {
     firebaseApp = getApp();
   }
@@ -36,7 +30,7 @@ try {
   firestoreDb = getFirestore(firebaseApp);
   googleProvider = new GoogleAuthProvider();
   googleProvider.addScope('https://www.googleapis.com/auth/drive.readonly');
-  googleProvider.addScope('https://www.googleapis.com/auth/spreadsheets.readonly');
+  googleProvider.setCustomParameters({ prompt: 'select_account' });
 } catch (e) {
   console.warn('Firebase initialization notice:', e);
 }
@@ -49,6 +43,7 @@ export const initAuth = (
 ) => {
   if (!firebaseAuth) return () => {};
   return onAuthStateChanged(firebaseAuth, async (user: User | null) => {
+    if (isSigningIn) return;
     if (user) {
       if (cachedAccessToken) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
@@ -66,6 +61,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   if (!firebaseAuth || !googleProvider) {
     throw new Error('Firebase Auth no está disponible en este entorno.');
   }
+  isSigningIn = true;
   try {
     const result = await signInWithPopup(firebaseAuth, googleProvider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
@@ -74,6 +70,8 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   } catch (error: any) {
     console.error('Google sign-in error:', error);
     throw error;
+  } finally {
+    isSigningIn = false;
   }
 };
 

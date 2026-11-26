@@ -53,6 +53,7 @@ import {
 } from '../../lib/sectorTemplates';
 import {
   DriveFileItem,
+  DriveAuthCredentials,
   listDriveSpreadsheetsAndFolders,
   listAllSpreadsheetsInFolderRecursive,
   getDriveFileMetadata,
@@ -61,6 +62,7 @@ import {
   isFolder,
   isGoogleSheet
 } from '../../lib/googleDriveService';
+import { firebaseApiKey } from '../../lib/firebase';
 import { syncStateToFirestore, loadStateFromFirestore } from '../../lib/firestoreSync';
 import { EmptyDatabaseModal } from '../common/EmptyDatabaseModal';
 
@@ -91,6 +93,16 @@ interface FolderSyncReport {
 }
 
 const LINKED_FOLDER_STORAGE_KEY = 'ita_ibate_linked_drive_folder';
+const LINKED_FOLDER_UNLINKED_KEY = 'ita_ibate_drive_folder_unlinked';
+
+const DEFAULT_OFFICIAL_DRIVE_FOLDER: LinkedDriveFolderConfig = {
+  folderId: '1vEK1_NJyTDky42GIW_T0u6SCBXTaPNJv',
+  folderName: 'Planillas Oficiales Itá Ibaté (Google Drive)',
+  folderUrl: 'https://drive.google.com/drive/folders/1vEK1_NJyTDky42GIW_T0u6SCBXTaPNJv?usp=sharing',
+  linkedByEmail: 'itaibatemodernizacion@gmail.com',
+  autoSyncOnConnect: true,
+  syncedFilesMap: {}
+};
 
 const TARGET_LABELS: Record<SectorImportTarget, string> = {
   SPORTS: 'Deportes y Recreación',
@@ -107,24 +119,28 @@ const TARGET_LABELS: Record<SectorImportTarget, string> = {
 
 const loadStoredLinkedFolder = (): LinkedDriveFolderConfig | null => {
   try {
+    if (localStorage.getItem(LINKED_FOLDER_UNLINKED_KEY) === 'true') {
+      return null;
+    }
     const raw = localStorage.getItem(LINKED_FOLDER_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed.folderId === 'string' && parsed.folderId.trim()) {
-      return {
-        folderId: parsed.folderId,
-        folderName: parsed.folderName || 'Carpeta Oficial Municipal',
-        folderUrl: parsed.folderUrl,
-        linkedByEmail: parsed.linkedByEmail,
-        autoSyncOnConnect: parsed.autoSyncOnConnect !== false,
-        lastSyncedAt: parsed.lastSyncedAt,
-        syncedFilesMap: parsed.syncedFilesMap && typeof parsed.syncedFilesMap === 'object' ? parsed.syncedFilesMap : {}
-      };
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.folderId === 'string' && parsed.folderId.trim()) {
+        return {
+          folderId: parsed.folderId,
+          folderName: parsed.folderName || 'Carpeta Oficial Municipal',
+          folderUrl: parsed.folderUrl,
+          linkedByEmail: parsed.linkedByEmail,
+          autoSyncOnConnect: parsed.autoSyncOnConnect !== false,
+          lastSyncedAt: parsed.lastSyncedAt,
+          syncedFilesMap: parsed.syncedFilesMap && typeof parsed.syncedFilesMap === 'object' ? parsed.syncedFilesMap : {}
+        };
+      }
     }
   } catch {
     // ignore storage errors
   }
-  return null;
+  return DEFAULT_OFFICIAL_DRIVE_FOLDER;
 };
 
 export const DriveAndExcelSync: React.FC = () => {
@@ -158,10 +174,15 @@ export const DriveAndExcelSync: React.FC = () => {
   // Google Drive Explorer State
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
+  const [publicFolderAvailable, setPublicFolderAvailable] = useState(false);
   const [driveFiles, setDriveFiles] = useState<DriveFileItem[]>([]);
-  const [folderStack, setFolderStack] = useState<{ id: string; name: string }[]>([
-    { id: 'ROOT', name: 'Mi Unidad (Google Drive)' }
-  ]);
+  const [folderStack, setFolderStack] = useState<{ id: string; name: string }[]>(() => {
+    const initialFolder = loadStoredLinkedFolder();
+    if (initialFolder) {
+      return [{ id: initialFolder.folderId, name: initialFolder.folderName }];
+    }
+    return [{ id: 'ROOT', name: 'Mi Unidad (Google Drive)' }];
+  });
   const [driveSearch, setDriveSearch] = useState('');
   const [sheetsUrl, setSheetsUrl] = useState('');
   const [loadingFileId, setLoadingFileId] = useState<string | null>(null);
@@ -173,12 +194,24 @@ export const DriveAndExcelSync: React.FC = () => {
 
   const currentFolder = folderStack[folderStack.length - 1];
 
+  const resolveDriveAuth = useCallback(
+    (tokenOverride?: string): DriveAuthCredentials | null => {
+      const token = tokenOverride || googleToken;
+      if (token) return { accessToken: token };
+      if (firebaseApiKey) return { apiKey: firebaseApiKey };
+      return null;
+    },
+    [googleToken]
+  );
+
   const persistLinkedFolder = useCallback((cfg: LinkedDriveFolderConfig | null) => {
     setLinkedFolder(cfg);
     try {
       if (cfg) {
+        localStorage.removeItem(LINKED_FOLDER_UNLINKED_KEY);
         localStorage.setItem(LINKED_FOLDER_STORAGE_KEY, JSON.stringify(cfg));
       } else {
+        localStorage.setItem(LINKED_FOLDER_UNLINKED_KEY, 'true');
         localStorage.removeItem(LINKED_FOLDER_STORAGE_KEY);
       }
     } catch {
@@ -226,45 +259,64 @@ export const DriveAndExcelSync: React.FC = () => {
   }, []);
 
   const loadDriveFiles = useCallback(
-    async (tokenOverride?: string, folderIdOverride?: string, searchOverride?: string) => {
-      const token = tokenOverride || googleToken;
-      if (!token) return;
+    async (
+      tokenOverride?: string,
+      folderIdOverride?: string,
+      searchOverride?: string,
+      silentPublicCheck = false
+    ) => {
+      const auth = resolveDriveAuth(tokenOverride);
+      const targetFolderId = folderIdOverride ?? currentFolder.id;
+      if (!auth) return;
+      if (!tokenOverride && !googleToken && targetFolderId === 'ROOT') return;
 
       setIsLoadingDrive(true);
-      setStatusError(null);
+      if (!silentPublicCheck) setStatusError(null);
       try {
-        const files = await listDriveSpreadsheetsAndFolders(token, {
-          folderId: searchOverride?.trim() ? undefined : (folderIdOverride ?? currentFolder.id),
+        const files = await listDriveSpreadsheetsAndFolders(auth, {
+          folderId: searchOverride?.trim() && (tokenOverride || googleToken) ? undefined : targetFolderId,
           searchText: searchOverride !== undefined ? searchOverride : driveSearch
         });
         setDriveFiles(files);
+        if (!tokenOverride && !googleToken) {
+          setPublicFolderAvailable(true);
+        }
       } catch (err: any) {
         if (err.message?.includes('AUTH_EXPIRED')) {
           clearGoogleToken();
         }
-        setStatusError(err.message || 'No se pudieron listar los archivos de Google Drive.');
+        if (silentPublicCheck) {
+          setPublicFolderAvailable(false);
+          setDriveFiles([]);
+        } else {
+          setStatusError(err.message || 'No se pudieron listar los archivos de Google Drive.');
+        }
       } finally {
         setIsLoadingDrive(false);
       }
     },
-    [googleToken, currentFolder.id, driveSearch, clearGoogleToken]
+    [googleToken, currentFolder.id, driveSearch, clearGoogleToken, resolveDriveAuth]
   );
 
   useEffect(() => {
     if (googleToken) {
-      loadDriveFiles(googleToken, currentFolder.id, driveSearch);
+      loadDriveFiles(googleToken, currentFolder.id, driveSearch, false);
+    } else if (linkedFolder && currentFolder.id !== 'ROOT' && firebaseApiKey) {
+      loadDriveFiles(undefined, currentFolder.id, '', true);
     } else {
       setDriveFiles([]);
+      setPublicFolderAvailable(false);
     }
-  }, [googleToken, currentFolder.id]);
+  }, [googleToken, currentFolder.id, linkedFolder?.folderId]);
 
   // Core 1-click recursive synchronization of the Linked Official Drive Folder
+  // Works both via Google OAuth token and directly via shared link (API key) if folder has viewer sharing enabled.
   const handleSyncLinkedFolder = useCallback(
     async (forceAll = false, tokenOverride?: string, folderOverride?: LinkedDriveFolderConfig | null) => {
-      const token = tokenOverride || googleToken;
+      const auth = resolveDriveAuth(tokenOverride);
       const targetFolder = folderOverride || linkedFolder;
 
-      if (!token) {
+      if (!auth) {
         setStatusError('Primero conecte su cuenta de Google Drive para sincronizar la carpeta oficial.');
         return;
       }
@@ -281,19 +333,36 @@ export const DriveAndExcelSync: React.FC = () => {
       setSyncProgressText(`Escaneando carpeta "${targetFolder.folderName}" y sus subcarpetas...`);
 
       try {
+        // Attempt to resolve the real Google Drive folder name automatically
+        let resolvedFolderName = targetFolder.folderName;
+        try {
+          const meta = await getDriveFileMetadata(auth, targetFolder.folderId);
+          if (meta?.name) {
+            resolvedFolderName = meta.name;
+          }
+        } catch {
+          // keep configured folder name if metadata lookup fails
+        }
+
         const allFound = await listAllSpreadsheetsInFolderRecursive(
-          token,
+          auth,
           targetFolder.folderId,
-          targetFolder.folderName,
+          resolvedFolderName,
           2
         );
 
+        if (!tokenOverride && !googleToken) {
+          setPublicFolderAvailable(true);
+          loadDriveFiles(undefined, targetFolder.folderId, '', true);
+        }
+
         if (allFound.length === 0) {
           setStatusNotice(
-            `La carpeta "${targetFolder.folderName}" está conectada correctamente, pero aún no contiene archivos Excel (.xlsx, .xls, .csv) ni Hojas de Google.`
+            `La carpeta "${resolvedFolderName}" está conectada correctamente, pero aún no contiene archivos Excel (.xlsx, .xls, .csv) ni Hojas de Google.`
           );
           const updatedCfg: LinkedDriveFolderConfig = {
             ...targetFolder,
+            folderName: resolvedFolderName,
             lastSyncedAt: new Date().toISOString()
           };
           persistLinkedFolder(updatedCfg);
@@ -309,10 +378,11 @@ export const DriveAndExcelSync: React.FC = () => {
 
         if (filesToProcess.length === 0) {
           setStatusNotice(
-            `Todos los ${allFound.length} archivo(s) de "${targetFolder.folderName}" ya están sincronizados y sin cambios nuevos. Use "Re-sincronizar Todo" si desea volver a procesarlos.`
+            `Todos los ${allFound.length} archivo(s) de "${resolvedFolderName}" ya están sincronizados y sin cambios nuevos. Use "Re-sincronizar Todo" si desea volver a procesarlos.`
           );
           const updatedCfg: LinkedDriveFolderConfig = {
             ...targetFolder,
+            folderName: resolvedFolderName,
             lastSyncedAt: new Date().toISOString()
           };
           persistLinkedFolder(updatedCfg);
@@ -330,7 +400,7 @@ export const DriveAndExcelSync: React.FC = () => {
             `Leyendo archivo ${i + 1} de ${filesToProcess.length}: ${entry.file.name}...`
           );
 
-          const buffer = await downloadDriveSpreadsheetBuffer(token, entry.file);
+          const buffer = await downloadDriveSpreadsheetBuffer(auth, entry.file);
           const parsed = parseSectorWorkbook(buffer, entry.file.name);
 
           if (parsed.totalDetected === 0) {
@@ -360,6 +430,7 @@ export const DriveAndExcelSync: React.FC = () => {
         const nowIso = new Date().toISOString();
         const updatedCfg: LinkedDriveFolderConfig = {
           ...targetFolder,
+          folderName: resolvedFolderName,
           lastSyncedAt: nowIso,
           syncedFilesMap: nextSyncedMap
         };
@@ -367,7 +438,7 @@ export const DriveAndExcelSync: React.FC = () => {
 
         if (batchItems.length === 0) {
           setStatusNotice(
-            `Se revisaron ${filesToProcess.length} archivo(s) nuevos/modificados en "${targetFolder.folderName}", pero ninguno tenía filas válidas con las columnas del modelo oficial.`
+            `Se revisaron ${filesToProcess.length} archivo(s) nuevos/modificados en "${resolvedFolderName}", pero ninguno tenía filas válidas con las columnas del modelo oficial.`
           );
           return;
         }
@@ -377,7 +448,7 @@ export const DriveAndExcelSync: React.FC = () => {
 
         setFolderSyncReport({
           timestamp: nowIso,
-          folderName: targetFolder.folderName,
+          folderName: resolvedFolderName,
           totalFound: allFound.length,
           skippedUnchanged,
           emptyOrUnrecognized,
@@ -394,7 +465,17 @@ export const DriveAndExcelSync: React.FC = () => {
         setSyncProgressText(null);
       }
     },
-    [googleToken, linkedFolder, departments, selectedDeptId, importMultipleSectorWorkbooks, persistLinkedFolder, clearGoogleToken]
+    [
+      googleToken,
+      linkedFolder,
+      departments,
+      selectedDeptId,
+      importMultipleSectorWorkbooks,
+      persistLinkedFolder,
+      clearGoogleToken,
+      resolveDriveAuth,
+      loadDriveFiles
+    ]
   );
 
   const handleConnectGoogle = async () => {
@@ -424,7 +505,8 @@ export const DriveAndExcelSync: React.FC = () => {
   const handleLinkFolderByUrl = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!folderLinkInput.trim()) return;
-    if (!googleToken) {
+    const auth = resolveDriveAuth();
+    if (!auth) {
       setStatusError('Primero conecte su cuenta de Google Drive para poder verificar y vincular la carpeta.');
       return;
     }
@@ -439,7 +521,7 @@ export const DriveAndExcelSync: React.FC = () => {
     setStatusError(null);
     setStatusNotice(null);
     try {
-      const meta = await getDriveFileMetadata(googleToken, folderId);
+      const meta = await getDriveFileMetadata(auth, folderId);
       if (!isFolder(meta.mimeType)) {
         setStatusError(
           `El enlace ingresado corresponde al archivo "${meta.name}", no a una carpeta. Para archivos individuales use "Leer Enlace" en el explorador; aquí pegue el enlace de la carpeta.`
@@ -459,19 +541,38 @@ export const DriveAndExcelSync: React.FC = () => {
       persistLinkedFolder(newCfg);
       setFolderLinkInput('');
       setIsEditingLinkedFolder(false);
-      setFolderStack([
-        { id: 'ROOT', name: 'Mi Unidad (Google Drive)' },
-        { id: meta.id, name: meta.name }
-      ]);
+      setFolderStack(
+        googleToken
+          ? [
+              { id: 'ROOT', name: 'Mi Unidad (Google Drive)' },
+              { id: meta.id, name: meta.name }
+            ]
+          : [{ id: meta.id, name: meta.name }]
+      );
       setStatusNotice(`Carpeta oficial "${meta.name}" vinculada correctamente. Ya puede sincronizar todas sus planillas con 1 clic.`);
     } catch (err: any) {
       if (err.message?.includes('AUTH_EXPIRED')) {
         clearGoogleToken();
       }
-      setStatusError(err.message || 'No se pudo acceder a la carpeta de Google Drive. Verifique que su cuenta tenga permiso de lectura.');
+      setStatusError(err.message || 'No se pudo acceder a la carpeta de Google Drive. Verifique que tenga permiso de lectura o inicie sesión con Google.');
     } finally {
       setIsLinkingFolder(false);
     }
+  };
+
+  const handleRestoreDefaultFolder = () => {
+    persistLinkedFolder(DEFAULT_OFFICIAL_DRIVE_FOLDER);
+    setIsEditingLinkedFolder(false);
+    setFolderStack(
+      googleToken
+        ? [
+            { id: 'ROOT', name: 'Mi Unidad (Google Drive)' },
+            { id: DEFAULT_OFFICIAL_DRIVE_FOLDER.folderId, name: DEFAULT_OFFICIAL_DRIVE_FOLDER.folderName }
+          ]
+        : [{ id: DEFAULT_OFFICIAL_DRIVE_FOLDER.folderId, name: DEFAULT_OFFICIAL_DRIVE_FOLDER.folderName }]
+    );
+    setStatusError(null);
+    setStatusNotice('Carpeta oficial municipal de Google Drive restaurada correctamente.');
   };
 
   const handlePinFolderAsOfficial = (folder: { id: string; name: string; webViewLink?: string }) => {
@@ -501,7 +602,7 @@ export const DriveAndExcelSync: React.FC = () => {
     persistLinkedFolder(null);
     setFolderSyncReport(null);
     setIsEditingLinkedFolder(false);
-    setStatusNotice('Se desvinculó la carpeta oficial de Google Drive. Puede elegir o enlazar otra cuando desee.');
+    setStatusNotice('Se desvinculó la carpeta oficial de Google Drive. Puede elegir o restaurar la carpeta municipal cuando desee.');
   };
 
   const handleOpenFolder = (folder: DriveFileItem) => {
@@ -515,7 +616,8 @@ export const DriveAndExcelSync: React.FC = () => {
   };
 
   const handleReadDriveFile = async (file: DriveFileItem) => {
-    if (!googleToken) {
+    const auth = resolveDriveAuth();
+    if (!auth) {
       setStatusError('Primero conecte su cuenta de Google Drive.');
       return;
     }
@@ -525,7 +627,7 @@ export const DriveAndExcelSync: React.FC = () => {
     setStatusNotice(null);
     setImportSummary(null);
     try {
-      const buffer = await downloadDriveSpreadsheetBuffer(googleToken, file);
+      const buffer = await downloadDriveSpreadsheetBuffer(auth, file);
       const parsed = parseSectorWorkbook(buffer, file.name, selectedDeptId);
       if (parsed.totalDetected === 0) {
         setStatusError(
@@ -559,7 +661,8 @@ export const DriveAndExcelSync: React.FC = () => {
   const handleLoadByUrl = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sheetsUrl.trim()) return;
-    if (!googleToken) {
+    const auth = resolveDriveAuth();
+    if (!auth) {
       setStatusError('Conéctese primero con Google Drive para poder leer el enlace compartido.');
       return;
     }
@@ -574,12 +677,16 @@ export const DriveAndExcelSync: React.FC = () => {
     setStatusError(null);
     setImportSummary(null);
     try {
-      const meta = await getDriveFileMetadata(googleToken, fileId);
+      const meta = await getDriveFileMetadata(auth, fileId);
       if (isFolder(meta.mimeType)) {
-        setFolderStack([
-          { id: 'ROOT', name: 'Mi Unidad (Google Drive)' },
-          { id: meta.id, name: meta.name }
-        ]);
+        setFolderStack(
+          googleToken
+            ? [
+                { id: 'ROOT', name: 'Mi Unidad (Google Drive)' },
+                { id: meta.id, name: meta.name }
+              ]
+            : [{ id: meta.id, name: meta.name }]
+        );
         setSheetsUrl('');
       } else {
         await handleReadDriveFile(meta);
@@ -673,7 +780,7 @@ export const DriveAndExcelSync: React.FC = () => {
       type="button"
       onClick={handleConnectGoogle}
       disabled={isConnectingGoogle}
-      className="inline-flex items-center gap-3 px-5 py-2.5 bg-white hover:bg-slate-100 text-slate-800 font-semibold text-sm rounded-full shadow-lg border border-slate-300 transition cursor-pointer disabled:opacity-60"
+      className="inline-flex items-center gap-3 px-4 py-2.5 bg-white hover:bg-[#f8f9fa] text-[#1f1f1f] font-medium text-sm rounded-full shadow-sm border border-[#747775] transition cursor-pointer disabled:opacity-60"
     >
       <svg
         version="1.1"
@@ -701,7 +808,7 @@ export const DriveAndExcelSync: React.FC = () => {
       <span>
         {isConnectingGoogle
           ? 'Conectando...'
-          : label || 'Sign in with Google · Conectar Drive'}
+          : label || 'Sign in with Google'}
       </span>
     </button>
   );
@@ -802,111 +909,8 @@ export const DriveAndExcelSync: React.FC = () => {
           )}
         </div>
 
-        {/* Case A: Not connected to Google yet */}
-        {!googleToken ? (
-          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-5 space-y-4">
-            {linkedFolder ? (
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="text-xs text-slate-400">Ubicación oficial guardada en el sistema:</div>
-                  <div className="flex items-center gap-2 text-sm font-bold text-white">
-                    <Folder className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>{linkedFolder.folderName}</span>
-                  </div>
-                  <div className="text-[11px] text-slate-400 flex flex-wrap gap-3">
-                    <span>Última sincronización: <strong className="text-slate-200">{formatDateTime(linkedFolder.lastSyncedAt)}</strong></span>
-                    <span>•</span>
-                    <span>Archivos seguidos: <strong className="text-slate-200">{trackedFilesCount}</strong></span>
-                  </div>
-                  {linkedFolder.autoSyncOnConnect && (
-                    <div className="text-[11px] text-emerald-400 pt-0.5">
-                      Al conectar con Google, los archivos nuevos o modificados de esta carpeta se sincronizarán automáticamente.
-                    </div>
-                  )}
-                </div>
-                <div className="shrink-0">
-                  {renderGoogleSignInButton('Sign in with Google · Conectar y Sincronizar')}
-                </div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-                <div className="lg:col-span-7 space-y-2">
-                  <h4 className="text-xs font-bold text-sky-300 uppercase tracking-wider">
-                    Cómo funciona en 3 pasos simples
-                  </h4>
-                  <ol className="space-y-1.5 text-xs text-slate-300 list-decimal list-inside">
-                    <li>
-                      En su Google Drive (<span className="font-mono text-sky-300">itaibatemodernizacion@gmail.com</span>), cree una carpeta (ej. <strong>Planillas_Ita_Ibate</strong>) y compártala con los encargados de cada área.
-                    </li>
-                    <li>
-                      Haga clic en <strong>Conectar Drive</strong> y pegue el enlace de esa carpeta (o fíjela con un clic desde el explorador de abajo) una sola vez.
-                    </li>
-                    <li>
-                      Cuando las áreas suban sus archivos Excel (sueltos o en subcarpetas por Secretaría), presione <strong>Sincronizar Toda la Carpeta</strong> y el sistema importará todo automáticamente sin duplicados.
-                    </li>
-                  </ol>
-                </div>
-                <div className="lg:col-span-5 flex flex-col items-center lg:items-end justify-center gap-2">
-                  {renderGoogleSignInButton('Sign in with Google · Conectar Drive')}
-                  <span className="text-[11px] text-slate-500">
-                    Acceso seguro de solo lectura (no modifica ni borra sus archivos)
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : !linkedFolder || isEditingLinkedFolder ? (
-          /* Case B: Connected to Google, linking or changing the official folder */
-          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-bold text-white">
-                {linkedFolder ? 'Cambiar Ubicación Oficial de Google Drive' : 'Enlazar Carpeta Oficial de Google Drive (Una sola vez)'}
-              </div>
-              {isEditingLinkedFolder && (
-                <button
-                  type="button"
-                  onClick={() => setIsEditingLinkedFolder(false)}
-                  className="text-xs text-slate-400 hover:text-white cursor-pointer"
-                >
-                  Cancelar
-                </button>
-              )}
-            </div>
-
-            <form onSubmit={handleLinkFolderByUrl} className="flex flex-col sm:flex-row gap-2">
-              <div className="relative flex-1">
-                <Link2 className="w-4 h-4 text-sky-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  value={folderLinkInput}
-                  onChange={(e) => setFolderLinkInput(e.target.value)}
-                  placeholder="Pegar enlace de la carpeta de Google Drive (ej. https://drive.google.com/drive/folders/...)"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={isLinkingFolder || !folderLinkInput.trim()}
-                className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 shrink-0"
-              >
-                {isLinkingFolder ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Pin className="w-3.5 h-3.5" />
-                )}
-                <span>{isLinkingFolder ? 'Verificando...' : 'Vincular Carpeta Oficial'}</span>
-              </button>
-            </form>
-
-            <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
-              <Info className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-              <span>
-                <strong>Opción aún más rápida:</strong> En el Explorador de Google Drive más abajo, busque su carpeta y presione el botón <strong className="text-amber-300">«Fijar Oficial»</strong>.
-              </span>
-            </div>
-          </div>
-        ) : (
-          /* Case C: Connected AND Official Folder is Linked */
+        {/* Case A: Linked Official Folder Active (works via Direct Shared Link OR Google Sign-In) */}
+        {linkedFolder && !isEditingLinkedFolder ? (
           <div className="bg-slate-950/80 border border-emerald-500/25 rounded-xl p-4 space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div className="space-y-1.5 min-w-0">
@@ -922,6 +926,11 @@ export const DriveAndExcelSync: React.FC = () => {
                     <span>Abrir en Drive</span>
                     <ExternalLink className="w-3 h-3" />
                   </a>
+                  {!googleToken && publicFolderAvailable && (
+                    <span className="px-2 py-0.5 text-[10px] font-bold bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded-full">
+                      Acceso Directo Activo
+                    </span>
+                  )}
                 </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
                   <span>
@@ -934,6 +943,11 @@ export const DriveAndExcelSync: React.FC = () => {
                     Escaneo: <strong className="text-emerald-300">Carpeta + Subcarpetas por Área</strong>
                   </span>
                 </div>
+                {!googleToken && (
+                  <p className="text-[11px] text-slate-400">
+                    Carpeta oficial preconfigurada. Puede sincronizar directamente con el enlace compartido o iniciar sesión con Google para acceso completo a su Drive.
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -957,6 +971,8 @@ export const DriveAndExcelSync: React.FC = () => {
                   <CheckCheck className="w-3.5 h-3.5 text-sky-400" />
                   <span>Re-sincronizar Todo</span>
                 </button>
+
+                {!googleToken && renderGoogleSignInButton('Sign in with Google')}
               </div>
             </div>
 
@@ -976,10 +992,15 @@ export const DriveAndExcelSync: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    setFolderStack([
-                      { id: 'ROOT', name: 'Mi Unidad (Google Drive)' },
-                      { id: linkedFolder.folderId, name: linkedFolder.folderName }
-                    ]);
+                    setFolderStack(
+                      googleToken
+                        ? [
+                            { id: 'ROOT', name: 'Mi Unidad (Google Drive)' },
+                            { id: linkedFolder.folderId, name: linkedFolder.folderName }
+                          ]
+                        : [{ id: linkedFolder.folderId, name: linkedFolder.folderName }]
+                    );
+                    loadDriveFiles(googleToken || undefined, linkedFolder.folderId, '', false);
                   }}
                   className="px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700 text-sky-300 rounded-lg text-[11px] font-semibold cursor-pointer"
                 >
@@ -1009,6 +1030,67 @@ export const DriveAndExcelSync: React.FC = () => {
               <div className="bg-sky-950/50 border border-sky-500/30 rounded-xl px-3.5 py-2.5 flex items-center gap-2.5 text-xs text-sky-200">
                 <RefreshCw className="w-4 h-4 animate-spin text-sky-400 shrink-0" />
                 <span className="font-medium">{syncProgressText}</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Case B: Linking or changing the official folder */
+          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-bold text-white">
+                {linkedFolder ? 'Cambiar Ubicación Oficial de Google Drive' : 'Enlazar Carpeta Oficial de Google Drive'}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleRestoreDefaultFolder}
+                  className="px-2.5 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 rounded-lg text-[11px] font-semibold cursor-pointer"
+                >
+                  Restaurar Carpeta Oficial Municipal
+                </button>
+                {isEditingLinkedFolder && (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingLinkedFolder(false)}
+                    className="text-xs text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <form onSubmit={handleLinkFolderByUrl} className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Link2 className="w-4 h-4 text-sky-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={folderLinkInput}
+                  onChange={(e) => setFolderLinkInput(e.target.value)}
+                  placeholder="Pegar enlace de la carpeta de Google Drive (ej. https://drive.google.com/drive/folders/...)"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isLinkingFolder || !folderLinkInput.trim()}
+                className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 shrink-0"
+              >
+                {isLinkingFolder ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Pin className="w-3.5 h-3.5" />
+                )}
+                <span>{isLinkingFolder ? 'Verificando...' : 'Vincular Carpeta Oficial'}</span>
+              </button>
+            </form>
+
+            {!googleToken && (
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <span className="text-[11px] text-slate-400">
+                  Para carpetas privadas, inicie sesión con su cuenta de Google:
+                </span>
+                {renderGoogleSignInButton('Sign in with Google')}
               </div>
             )}
           </div>
@@ -1251,17 +1333,17 @@ export const DriveAndExcelSync: React.FC = () => {
                   2. Explorador de Google Drive (Elegir Carpeta o Archivo Puntual)
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  {googleToken
-                    ? 'Navegue sus carpetas, fije una como Ubicación Oficial o previsualice un archivo individual.'
-                    : 'Conecte su cuenta de Google arriba para explorar carpetas y archivos de Drive.'}
+                  {googleToken || publicFolderAvailable
+                    ? 'Navegue la carpeta oficial municipal, abra subcarpetas o previsualice cualquier Excel individual.'
+                    : 'Sincronice la carpeta compartida o inicie sesión con Google para explorar sus planillas de Drive.'}
                 </p>
               </div>
             </div>
 
-            {googleToken && (
+            {(googleToken || publicFolderAvailable) && (
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => loadDriveFiles()}
+                  onClick={() => loadDriveFiles(googleToken || undefined, currentFolder.id, driveSearch, false)}
                   disabled={isLoadingDrive}
                   className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
                 >
@@ -1272,15 +1354,26 @@ export const DriveAndExcelSync: React.FC = () => {
             )}
           </div>
 
-          {!googleToken ? (
+          {!googleToken && !publicFolderAvailable ? (
             <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-6 text-center space-y-4">
               <div className="max-w-md mx-auto space-y-2">
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Conecte su cuenta de Google Drive para examinar carpetas, fijar la carpeta oficial municipal o revisar planillas individuales antes de importarlas.
+                  Inicie sesión con su cuenta de Google Drive para examinar carpetas y planillas individuales, o lea directamente la carpeta oficial compartida.
                 </p>
               </div>
-              <div className="flex justify-center">
-                {renderGoogleSignInButton('Sign in with Google · Conectar Drive')}
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                {linkedFolder && (
+                  <button
+                    type="button"
+                    onClick={() => loadDriveFiles(undefined, linkedFolder.folderId, '', false)}
+                    disabled={isLoadingDrive}
+                    className="px-4 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-full text-xs font-bold transition cursor-pointer disabled:opacity-60 flex items-center gap-2"
+                  >
+                    <FolderOpen className="w-4 h-4" />
+                    <span>{isLoadingDrive ? 'Cargando...' : 'Leer Carpeta Compartida'}</span>
+                  </button>
+                )}
+                {renderGoogleSignInButton('Sign in with Google')}
               </div>
             </div>
           ) : (
