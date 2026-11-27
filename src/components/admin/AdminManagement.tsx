@@ -25,9 +25,16 @@ import {
   Database,
   CheckCircle2,
   Trash,
-  ChefHat
+  ChefHat,
+  FileSpreadsheet,
+  FileJson
 } from 'lucide-react';
 import { EmptyDatabaseModal } from '../common/EmptyDatabaseModal';
+import {
+  exportAuthoritiesToJson,
+  exportAuthoritiesToExcel,
+  mergeAuthoritiesFromExcelBuffer
+} from '../../lib/authoritiesSync';
 
 export const AdminManagement: React.FC = () => {
   const { 
@@ -37,6 +44,7 @@ export const AdminManagement: React.FC = () => {
     updateDepartment, 
     deleteDepartment, 
     updateDepartmentLeader,
+    replaceDepartmentsFromImport,
     departmentKPIs,
     auditLogs,
     resetAllData,
@@ -197,6 +205,46 @@ export const AdminManagement: React.FC = () => {
       type: 'success',
       text: `Titular de "${selectedLeaderDept.name}" guardado permanentemente (almacenamiento local y nube).`
     });
+  };
+
+  const handleImportAuthoritiesFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const lower = file.name.toLowerCase();
+      if (lower.endsWith('.json')) {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const list = Array.isArray(parsed) ? parsed : parsed?.departments;
+        if (!Array.isArray(list) || list.length === 0) {
+          setAdminNotice({ type: 'error', text: 'El archivo JSON no contiene un listado válido de autoridades.' });
+          return;
+        }
+        replaceDepartmentsFromImport(list, file.name);
+        setAdminNotice({
+          type: 'success',
+          text: `Autoridades importadas desde ${file.name} (${list.length} áreas actualizadas).`
+        });
+      } else {
+        const buffer = await file.arrayBuffer();
+        const res = mergeAuthoritiesFromExcelBuffer(buffer, departments);
+        if (res.matchedCount === 0) {
+          setAdminNotice({
+            type: 'error',
+            text: 'No se reconocieron columnas de autoridades en el Excel. Use el archivo exportado desde este panel.'
+          });
+          return;
+        }
+        replaceDepartmentsFromImport(res.updated, file.name);
+        setAdminNotice({
+          type: 'success',
+          text: `Se actualizaron ${res.matchedCount} autoridades desde ${file.name}.`
+        });
+      }
+    } catch (err: any) {
+      setAdminNotice({ type: 'error', text: err?.message || 'Error al importar archivo de autoridades.' });
+    }
   };
 
   const handleSaveDept = (e: React.FormEvent) => {
@@ -416,28 +464,71 @@ export const AdminManagement: React.FC = () => {
       {/* TAB 0: OFFICIAL ORGANIGRAMA & AUTHORITIES */}
       {activeTab === 'ORGANIGRAMA' && (
         <div className="space-y-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div>
-              <h3 className="font-bold text-white text-sm flex items-center gap-2">
-                <Layers className="w-4 h-4 text-sky-400" />
-                Estructura Orgánica Oficial – Municipalidad de Itá Ibaté
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Organigrama por Decreto Municipal: 7 Secretarías con sus respectivas Direcciones Generales, Coordinaciones y Titulares a cargo.
-              </p>
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-sky-400" />
+                  Organigrama y Autoridades
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {departments.filter(d => d.category === 'SECRETARIA').length} Secretarías ·{' '}
+                  {departments.filter(d => d.category === 'DIRECCION_GENERAL').length} Direcciones ·{' '}
+                  {departments.filter(d => d.category === 'COORDINACION').length} Coordinaciones ·{' '}
+                  {departments.filter(d => d.category === 'DEPENDENCIA_DEM').length} D.E.M.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    exportAuthoritiesToJson(departments);
+                    setAdminNotice({
+                      type: 'success',
+                      text: 'Archivo autoridades.json descargado. Subilo a public/autoridades.json en GitHub para que Netlify cargue tus Secretarios y Directores automáticamente.'
+                    });
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                  title="Descarga autoridades.json para subir a public/autoridades.json en GitHub"
+                >
+                  <FileJson className="w-4 h-4" />
+                  <span>Guardar p/ GitHub</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    exportAuthoritiesToExcel(departments);
+                    setAdminNotice({
+                      type: 'success',
+                      text: 'Excel Autoridades_Organigrama_ItaIbate.xlsx descargado. Subilo a tu carpeta Sistema de Gestión en Google Drive para sincronizar automáticamente en Netlify.'
+                    });
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                  title="Descarga un Excel con tus autoridades para subir a tu carpeta de Google Drive"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Excel p/ Drive</span>
+                </button>
+
+                <label className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition cursor-pointer">
+                  <Upload className="w-4 h-4 text-sky-400" />
+                  <span>Importar</span>
+                  <input
+                    type="file"
+                    accept=".json,.xlsx,.xls"
+                    onChange={handleImportAuthoritiesFile}
+                    className="hidden"
+                  />
+                </label>
+              </div>
             </div>
-            <div className="text-xs text-slate-400 flex flex-wrap items-center gap-2">
-              <span className="px-2.5 py-1 bg-amber-950/60 border border-amber-500/30 rounded-lg text-amber-300 font-mono">
-                {departments.filter(d => d.category === 'DEPENDENCIA_DEM').length} Dep. D.E.M.
-              </span>
-              <span className="px-2.5 py-1 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 font-mono">
-                {departments.filter(d => d.category === 'SECRETARIA').length} Secretarías
-              </span>
-              <span className="px-2.5 py-1 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 font-mono">
-                {departments.filter(d => d.category === 'DIRECCION_GENERAL').length} Dir. Generales
-              </span>
-              <span className="px-2.5 py-1 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 font-mono">
-                {departments.filter(d => d.category === 'COORDINACION').length} Coordinaciones
+
+            <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 flex items-center gap-2">
+              <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>
+                Para ver estos nombres en Netlify: descargá <strong className="text-slate-200">Excel p/ Drive</strong> y subilo a tu carpeta <em>Sistema de Gestión</em>, o subí <strong className="text-slate-200">autoridades.json</strong> a <code className="text-sky-300">public/autoridades.json</code> en GitHub.
               </span>
             </div>
           </div>

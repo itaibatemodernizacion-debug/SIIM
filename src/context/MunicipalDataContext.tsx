@@ -54,6 +54,10 @@ import {
   isGoogleSheet
 } from '../lib/googleDriveService';
 import { syncStateToFirestore, loadStateFromFirestore } from '../lib/firestoreSync';
+import {
+  isAuthoritiesFileName,
+  mergeAuthoritiesFromExcelBuffer
+} from '../lib/authoritiesSync';
 
 export const OFFICIAL_MUNICIPAL_DRIVE_FOLDER_ID = '1vEK1_NJyTDky42GIW_T0u6SCBXTaPNJv';
 export const OFFICIAL_MUNICIPAL_DRIVE_URL =
@@ -163,6 +167,7 @@ interface MunicipalDataContextType {
       legalReference?: string;
     }
   ) => void;
+  replaceDepartmentsFromImport: (list: Department[], sourceLabel?: string) => void;
 
   // Registro Necrológico Municipal
   necrologicalRecords: NecrologicalRecord[];
@@ -632,6 +637,44 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, []);
 
+  // Hydrate official authorities from /autoridades.json committed in GitHub/Netlify repo
+  useEffect(() => {
+    let active = true;
+    fetch('/autoridades.json', { cache: 'no-store' })
+      .then(res => {
+        if (!res.ok) return null;
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) return null;
+        return res.json();
+      })
+      .then(payload => {
+        if (!active || !payload || !Array.isArray(payload.departments) || payload.departments.length === 0) {
+          return;
+        }
+        const repoUpdatedAt = typeof payload.updatedAt === 'string' ? payload.updatedAt : '';
+        const localUpdatedAt = localStorage.getItem(STORAGE_KEYS.DEPTS_UPDATED_AT) || '';
+        if (!localUpdatedAt || (repoUpdatedAt && repoUpdatedAt > localUpdatedAt)) {
+          const merged = mergeSystemDepartmentsNonDestructive(payload.departments as Department[]);
+          setDepartments(merged);
+          try {
+            localStorage.setItem(STORAGE_KEYS.DEPTS, JSON.stringify(merged));
+            if (repoUpdatedAt) {
+              localStorage.setItem(STORAGE_KEYS.DEPTS_UPDATED_AT, repoUpdatedAt);
+              setDepartmentsLastSavedAt(repoUpdatedAt);
+            }
+          } catch {
+            // ignore storage quota
+          }
+        }
+      })
+      .catch(() => {
+        // optional repo file
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Helper to immediately persist department & authority edits both locally and in Firestore
   const persistDepartmentsChange = (updater: (prev: Department[]) => Department[]) => {
     setDepartments(prev => {
@@ -700,6 +743,17 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
       return d;
     }));
     logAudit('ACTUALIZACION_AUTORIDAD', 'ORGANIGRAMA', `Se asignó a ${leaderData.leaderName} a cargo del área: ${departmentId}`, departmentId);
+  };
+
+  const replaceDepartmentsFromImport = (list: Department[], sourceLabel = 'Importación de Autoridades') => {
+    if (!Array.isArray(list) || list.length === 0) return;
+    const merged = mergeSystemDepartmentsNonDestructive(list);
+    persistDepartmentsChange(() => merged);
+    logAudit(
+      'IMPORTACION_AUTORIDADES',
+      'ORGANIGRAMA',
+      `Actualizadas ${merged.length} áreas y titulares desde ${sourceLabel}`
+    );
   };
 
   // Registro Necrológico Municipal (Desarrollo Social)
@@ -2106,12 +2160,25 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         const batchItems: SectorWorkbookBatchItem[] = [];
         const failedFiles: string[] = [];
         const syncedFilesMap: Record<string, string> = {};
+        let authoritiesUpdatedCount = 0;
 
         for (let i = 0; i < allFound.length; i++) {
           const entry = allFound[i];
           setDriveSyncProgress(`Leyendo planilla ${i + 1} de ${allFound.length}: ${entry.file.name}`);
           try {
             const buffer = await downloadDriveSpreadsheetBuffer(auth, entry.file);
+
+            // Detect official Authorities/Organigrama spreadsheet uploaded in Drive
+            if (isAuthoritiesFileName(entry.file.name)) {
+              const authRes = mergeAuthoritiesFromExcelBuffer(buffer, departments);
+              if (authRes.matchedCount > 0) {
+                authoritiesUpdatedCount += authRes.matchedCount;
+                persistDepartmentsChange(() => authRes.updated);
+                syncedFilesMap[entry.file.id] = entry.file.modifiedTime || 'static';
+                continue;
+              }
+            }
+
             const parsed = parseSectorWorkbook(buffer, entry.file.name);
             if (parsed.totalDetected === 0) {
               failedFiles.push(`${entry.file.name} (sin filas válidas)`);
@@ -2136,16 +2203,23 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         }
 
-        if (batchItems.length === 0) {
+        if (batchItems.length === 0 && authoritiesUpdatedCount === 0) {
           throw new Error(
             'Se encontraron archivos en Google Drive pero ninguno pudo importarse con las columnas del modelo oficial.'
           );
         }
 
         setDriveSyncProgress(`Actualizando el sistema con ${batchItems.length} planillas reales...`);
-        const summary = importMultipleSectorWorkbooks(batchItems, {
-          replaceExisting: options?.replaceExisting ?? true
-        });
+        const summary =
+          batchItems.length > 0
+            ? importMultipleSectorWorkbooks(batchItems, {
+                replaceExisting: options?.replaceExisting ?? true
+              })
+            : { added: 0, updated: 0, duplicates: 0, breakdown: {}, perFile: [] };
+
+        if (authoritiesUpdatedCount > 0) {
+          summary.breakdown['Autoridades'] = authoritiesUpdatedCount;
+        }
 
         const nowIso = new Date().toISOString();
         const syncInfo: DriveLiveSyncInfo = {
@@ -2804,6 +2878,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         updateDepartment,
         deleteDepartment,
         updateDepartmentLeader,
+        replaceDepartmentsFromImport,
         necrologicalRecords,
         addNecrologicalRecord,
         updateNecrologicalRecord,

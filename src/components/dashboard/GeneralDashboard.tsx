@@ -1,50 +1,57 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   useMunicipalData,
   OFFICIAL_MUNICIPAL_DRIVE_URL
 } from '../../context/MunicipalDataContext';
 import { ITA_IBATE_NEIGHBORHOODS } from '../../data/initialData';
-import { 
-  Users, 
-  CheckCircle2, 
-  Clock, 
-  AlertCircle, 
-  TrendingUp, 
-  Trophy, 
-  Calendar, 
-  Building2, 
-  MapPin, 
-  ArrowUpRight, 
-  Filter, 
+import { ActiveTab } from '../Sidebar';
+import {
+  Users,
+  CheckCircle2,
+  Clock,
+  Trophy,
+  Building2,
+  MapPin,
+  Filter,
   RotateCcw,
   AlertTriangle,
-  Award,
-  Zap,
-  Activity,
   Trash2,
-  FolderSync,
   RefreshCw,
   ExternalLink,
   Cloud,
-  X
+  X,
+  FileText,
+  Shield,
+  GraduationCap,
+  ChefHat,
+  IdCard,
+  DollarSign,
+  FileSpreadsheet,
+  BarChart3,
+  Settings,
+  ChevronRight
 } from 'lucide-react';
 import { EmptyDatabaseModal } from '../common/EmptyDatabaseModal';
 
-export const GeneralDashboard: React.FC<{ 
+export const GeneralDashboard: React.FC<{
   onNavigateToTickets: () => void;
   onNavigateToSports: () => void;
   onNavigateToAreas: (deptId?: string) => void;
   onNavigateToDrive?: () => void;
+  onNavigateTab?: (tab: ActiveTab) => void;
 }> = ({
   onNavigateToTickets,
   onNavigateToSports,
   onNavigateToAreas,
-  onNavigateToDrive
+  onNavigateToDrive,
+  onNavigateTab
 }) => {
-  const [showEmptyDbModal, setShowEmptyDbModal] = React.useState(false);
-  const { 
-    kpis, 
-    departmentKPIs, 
+  const [showEmptyDbModal, setShowEmptyDbModal] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+
+  const {
+    kpis,
+    departmentKPIs,
     departments,
     filteredTickets,
     dateRange,
@@ -60,20 +67,23 @@ export const GeneralDashboard: React.FC<{
     driveSyncError,
     lastDriveSyncInfo,
     syncFromOfficialDrive,
-    clearDriveSyncError
+    clearDriveSyncError,
+    urbanControlKPIs,
+    employeeKPIs,
+    culturalKPIs,
+    escuelaEmpresaKPIs,
+    financialKPIs
   } = useMunicipalData();
 
   const formattedLastDriveSync = lastDriveSyncInfo?.timestamp
     ? new Date(lastDriveSyncInfo.timestamp).toLocaleString('es-AR', {
         day: '2-digit',
         month: '2-digit',
-        year: 'numeric',
         hour: '2-digit',
         minute: '2-digit'
       })
     : null;
 
-  // Calculate neighborhood breakdown
   const neighborhoodCounts: Record<string, number> = {};
   filteredTickets.forEach(t => {
     const nh = t.citizenNeighborhood || 'Sin Barrio';
@@ -81,15 +91,10 @@ export const GeneralDashboard: React.FC<{
   });
 
   const sortedNeighborhoods = Object.entries(neighborhoodCounts)
-    .sort((a, b) => b[1] - a[1]);
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
 
-  // Ranking of departments by resolution rate
-  const sortedDeptsByResolution = [...departmentKPIs]
-    .filter(d => d.totalTickets > 0)
-    .sort((a, b) => b.resolutionRate - a.resolutionRate);
-
-  // Ranking of departments by total tickets
-  const sortedDeptsByVolume = [...departmentKPIs]
+  const activeDepartmentKPIs = [...departmentKPIs]
     .filter(d => d.totalTickets > 0)
     .sort((a, b) => b.totalTickets - a.totalTickets);
 
@@ -100,150 +105,144 @@ export const GeneralDashboard: React.FC<{
     setDateRange({ start: '', end: '' });
   };
 
-  const hasActiveFilters = selectedDepartmentId !== 'ALL' || selectedNeighborhood !== 'ALL' || selectedStatus !== 'ALL' || dateRange.start || dateRange.end;
+  const hasActiveFilters =
+    selectedDepartmentId !== 'ALL' ||
+    selectedNeighborhood !== 'ALL' ||
+    selectedStatus !== 'ALL' ||
+    Boolean(dateRange.start) ||
+    Boolean(dateRange.end);
+
+  const quickModules: {
+    tab: ActiveTab;
+    label: string;
+    icon: React.ElementType;
+    color: string;
+    value?: string | number;
+  }[] = [
+    { tab: 'TICKETS', label: 'Trámites', icon: FileText, color: 'text-amber-400 bg-amber-500/10', value: kpis.totalTickets },
+    { tab: 'CITIZENS', label: 'Vecinos', icon: Users, color: 'text-sky-400 bg-sky-500/10', value: kpis.totalCitizens },
+    { tab: 'CONTROL_URBANO', label: 'Control Vial', icon: Shield, color: 'text-cyan-400 bg-cyan-500/10', value: urbanControlKPIs.totalLicenses },
+    { tab: 'SPORTS', label: 'Deportes', icon: Trophy, color: 'text-orange-400 bg-orange-500/10', value: kpis.totalSportParticipants },
+    { tab: 'CULTURE', label: 'Cultura', icon: GraduationCap, color: 'text-pink-400 bg-pink-500/10', value: culturalKPIs.totalStudents },
+    { tab: 'ESCUELA_EMPRESA', label: 'Esc. Empresa', icon: ChefHat, color: 'text-amber-300 bg-amber-500/10', value: escuelaEmpresaKPIs.totalStudents },
+    { tab: 'RRHH', label: 'RRHH', icon: IdCard, color: 'text-blue-400 bg-blue-500/10', value: employeeKPIs.totalEmployees },
+    { tab: 'FUNDS', label: 'Fondos', icon: DollarSign, color: 'text-emerald-400 bg-emerald-500/10', value: financialKPIs.departmentsWithPendingSettlements || 0 },
+    { tab: 'AREAS', label: 'Áreas', icon: Building2, color: 'text-indigo-400 bg-indigo-500/10', value: departments.filter(d => d.active).length },
+    { tab: 'DRIVE_SYNC', label: 'Drive', icon: FileSpreadsheet, color: 'text-emerald-400 bg-emerald-500/10', value: lastDriveSyncInfo?.filesImported || '' },
+    { tab: 'REPORTS', label: 'Informes', icon: BarChart3, color: 'text-violet-400 bg-violet-500/10' },
+    { tab: 'ADMIN', label: 'Admin', icon: Settings, color: 'text-slate-300 bg-slate-700/40' }
+  ];
+
+  const handleModuleClick = (tab: ActiveTab) => {
+    if (onNavigateTab) {
+      onNavigateTab(tab);
+      return;
+    }
+    if (tab === 'TICKETS') onNavigateToTickets();
+    else if (tab === 'SPORTS') onNavigateToSports();
+    else if (tab === 'AREAS') onNavigateToAreas();
+    else if (tab === 'DRIVE_SYNC' && onNavigateToDrive) onNavigateToDrive();
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Page Title & Intro */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-white tracking-tight">
-              Tablero Central de Gestión Municipal
-            </h2>
-            <span className="px-2 py-0.5 text-xs font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full">
-              Itá Ibaté En Cifras
+    <div className="space-y-4 sm:space-y-5">
+      {/* Compact Top Control Row */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
+            Resumen Municipal
+          </h2>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400 mt-0.5">
+            <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
+              <Cloud className="w-3.5 h-3.5" />
+              {lastDriveSyncInfo?.folderName || 'Sistema de Gestión'}
             </span>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Consolidado general de atenciones ciudadanas, resolución de reclamos, actividades deportivas y rendimiento sectorial.
-          </p>
-        </div>
-
-        {/* Quick Actions & Resolution Gauge Banner */}
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => syncFromOfficialDrive({ replaceExisting: true })}
-            disabled={isDriveSyncing}
-            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-extrabold shadow-md shadow-emerald-950/50 transition cursor-pointer disabled:opacity-60"
-            title="Actualiza todo el sistema en tiempo real con las planillas Excel de cada Secretaría y Dirección en Google Drive"
-          >
-            <RefreshCw className={`w-4 h-4 ${isDriveSyncing ? 'animate-spin' : ''}`} />
-            <span>{isDriveSyncing ? 'Actualizando desde Drive...' : 'Actualizar desde Drive'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowEmptyDbModal(true)}
-            className="flex items-center gap-2 px-3.5 py-2.5 bg-rose-950/70 hover:bg-rose-600 text-rose-200 hover:text-white border border-rose-500/40 rounded-xl text-xs font-bold shadow-sm transition cursor-pointer"
-            title="Vaciar los datos operativos actuales (conserva autoridades y credenciales)"
-          >
-            <Trash2 className="w-4 h-4" />
-            <span>Vaciar Base</span>
-          </button>
-
-          <div className="flex items-center gap-3 bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800/80">
-            <div className="w-12 h-12 rounded-full bg-emerald-500/10 border-2 border-emerald-500/40 flex items-center justify-center">
-              <span className="text-sm font-extrabold text-emerald-400">{kpis.resolutionRate}%</span>
-            </div>
-            <div>
-              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Eficacia de Gestión</div>
-              <div className="text-xs font-bold text-slate-200">
-                {kpis.resolvedTickets} de {kpis.totalTickets} solicitudes resueltas
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Live Google Drive Sync Status Banner */}
-      <div className="bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-4 shadow-sm space-y-2.5">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
-              {isDriveSyncing ? (
-                <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin" />
-              ) : (
-                <Cloud className="w-4 h-4 text-emerald-400" />
-              )}
-            </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-xs font-bold text-white">
-                  Base Sincronizada con Google Drive: {lastDriveSyncInfo?.folderName || 'Sistema de Gestión'}
-                </h3>
-                {lastDriveSyncInfo && !isDriveSyncing && (
-                  <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-full">
-                    {lastDriveSyncInfo.filesImported} planillas • {lastDriveSyncInfo.totalRecords} registros activos
-                  </span>
-                )}
-              </div>
-              <p className="text-[11px] text-slate-300 mt-0.5">
-                {isDriveSyncing
-                  ? driveSyncProgress || 'Leyendo carpetas de Secretarías y Direcciones en Google Drive...'
-                  : lastDriveSyncInfo
-                    ? `Última actualización automática desde los Excel oficiales: ${formattedLastDriveSync}. Cada vez que suban o modifiquen un Excel en Drive, presione "Actualizar desde Drive".`
-                    : 'Conectado a la carpeta compartida oficial. Presione "Actualizar desde Drive" para cargar todos los Excel de las Secretarías y Direcciones.'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <a
-              href={OFFICIAL_MUNICIPAL_DRIVE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 rounded-lg text-[11px] font-semibold transition"
-            >
-              <span>Abrir Carpeta Drive</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-            {onNavigateToDrive && (
-              <button
-                type="button"
-                onClick={onNavigateToDrive}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-[11px] font-semibold transition cursor-pointer"
-              >
-                <FolderSync className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Ver Planillas</span>
-              </button>
+            {lastDriveSyncInfo && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="font-mono tabular-nums text-slate-300">
+                  {lastDriveSyncInfo.filesImported} Excel · {lastDriveSyncInfo.totalRecords} reg.
+                </span>
+              </>
+            )}
+            {formattedLastDriveSync && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{formattedLastDriveSync}</span>
+              </>
             )}
           </div>
         </div>
 
-        {driveSyncError && (
-          <div className="flex items-center justify-between gap-2 bg-rose-950/60 border border-rose-500/40 rounded-xl px-3 py-2 text-[11px] text-rose-200">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-              <span>{driveSyncError}</span>
-            </div>
-            <button
-              type="button"
-              onClick={clearDriveSyncError}
-              className="text-rose-300 hover:text-white cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => syncFromOfficialDrive({ replaceExisting: true })}
+            disabled={isDriveSyncing}
+            className="min-h-[42px] px-3.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-60 whitespace-nowrap"
+          >
+            <RefreshCw className={`w-4 h-4 ${isDriveSyncing ? 'animate-spin' : ''}`} />
+            <span>{isDriveSyncing ? 'Actualizando...' : 'Actualizar'}</span>
+          </button>
 
-        {lastDriveSyncInfo && Object.keys(lastDriveSyncInfo.breakdown).length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-800/80">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
-              Módulos cargados:
-            </span>
-            {Object.entries(lastDriveSyncInfo.breakdown).map(([label, count]) => (
-              <span
-                key={label}
-                className="px-2 py-0.5 rounded-md bg-slate-950/90 border border-slate-800 text-[10px] text-slate-300"
-              >
-                <strong className="text-emerald-300">{count}</strong> {label}
-              </span>
-            ))}
-          </div>
-        )}
+          <button
+            type="button"
+            onClick={() => setShowFilters(prev => !prev)}
+            className={`min-h-[42px] min-w-[42px] px-3 rounded-xl border text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+              showFilters || hasActiveFilters
+                ? 'bg-sky-600/20 border-sky-500 text-sky-300'
+                : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
+            }`}
+            title="Filtrar datos"
+          >
+            <Filter className="w-4 h-4" />
+            <span className="hidden sm:inline">Filtros</span>
+          </button>
+
+          <a
+            href={OFFICIAL_MUNICIPAL_DRIVE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="min-h-[42px] min-w-[42px] rounded-xl bg-slate-900 border border-slate-800 hover:bg-slate-800 text-sky-400 flex items-center justify-center transition"
+            title="Abrir carpeta en Google Drive"
+          >
+            <ExternalLink className="w-4 h-4" />
+          </a>
+
+          <button
+            type="button"
+            onClick={() => setShowEmptyDbModal(true)}
+            className="min-h-[42px] min-w-[42px] rounded-xl bg-slate-900 border border-slate-800 hover:border-rose-500/50 hover:text-rose-400 text-slate-400 flex items-center justify-center transition cursor-pointer"
+            title="Vaciar datos operativos"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
       </div>
+
+      {/* Live Sync Progress / Error inline feedback */}
+      {isDriveSyncing && driveSyncProgress && (
+        <div className="bg-emerald-950/50 border border-emerald-500/30 rounded-xl px-3.5 py-2.5 text-xs text-emerald-200 flex items-center gap-2">
+          <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin shrink-0" />
+          <span className="truncate">{driveSyncProgress}</span>
+        </div>
+      )}
+
+      {driveSyncError && (
+        <div className="bg-rose-950/60 border border-rose-500/40 rounded-xl px-3.5 py-2.5 text-xs text-rose-200 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span className="truncate">{driveSyncError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={clearDriveSyncError}
+            className="text-rose-300 hover:text-white p-1 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <EmptyDatabaseModal
         isOpen={showEmptyDbModal}
@@ -251,338 +250,292 @@ export const GeneralDashboard: React.FC<{
         onGoToDrive={onNavigateToDrive}
       />
 
-      {/* Interactive Filter Bar */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
-        <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-sky-400" />
-            <span>FILTROS DE INFORMACIÓN</span>
+      {/* Collapsible Filter Drawer */}
+      {showFilters && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-200">Filtros</span>
             {hasActiveFilters && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold">
-                Filtros activos
-              </span>
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Limpiar
+              </button>
             )}
           </div>
-          {hasActiveFilters && (
-            <button
-              onClick={resetFilters}
-              className="text-slate-400 hover:text-white flex items-center gap-1 text-[11px] font-medium cursor-pointer"
-            >
-              <RotateCcw className="w-3 h-3" />
-              Limpiar filtros
-            </button>
-          )}
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-          {/* Department Filter */}
-          <div>
-            <label className="block text-[11px] font-medium text-slate-400 mb-1">Secretaría / Dirección</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 text-xs">
             <select
               value={selectedDepartmentId}
               onChange={(e) => setSelectedDepartmentId(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-sky-500"
+              className="w-full min-h-[42px] bg-slate-950 border border-slate-800 rounded-xl px-3 text-slate-200 focus:outline-none focus:border-sky-500"
             >
-              <option value="ALL">Todas las Áreas Municipales</option>
+              <option value="ALL">Todas las Áreas</option>
               {departments.map(d => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
+                <option key={d.id} value={d.id}>{d.shortName || d.name}</option>
               ))}
             </select>
-          </div>
 
-          {/* Neighborhood Filter */}
-          <div>
-            <label className="block text-[11px] font-medium text-slate-400 mb-1">Barrio de Itá Ibaté</label>
             <select
               value={selectedNeighborhood}
               onChange={(e) => setSelectedNeighborhood(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-sky-500"
+              className="w-full min-h-[42px] bg-slate-950 border border-slate-800 rounded-xl px-3 text-slate-200 focus:outline-none focus:border-sky-500"
             >
               <option value="ALL">Todos los Barrios</option>
               {ITA_IBATE_NEIGHBORHOODS.map(nh => (
                 <option key={nh} value={nh}>{nh}</option>
               ))}
             </select>
-          </div>
 
-          {/* Status Filter */}
-          <div>
-            <label className="block text-[11px] font-medium text-slate-400 mb-1">Estado de Solicitud</label>
             <select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-sky-500"
+              className="w-full min-h-[42px] bg-slate-950 border border-slate-800 rounded-xl px-3 text-slate-200 focus:outline-none focus:border-sky-500"
             >
               <option value="ALL">Todos los Estados</option>
-              <option value="SOLUCIONADO">Solucionados ({kpis.resolvedTickets})</option>
+              <option value="SOLUCIONADO">Resueltos ({kpis.resolvedTickets})</option>
               <option value="PENDIENTE">Pendientes ({kpis.pendingTickets})</option>
               <option value="EN_PROCESO">En Proceso ({kpis.inProgressTickets})</option>
             </select>
-          </div>
 
-          {/* Date range filter */}
-          <div>
-            <label className="block text-[11px] font-medium text-slate-400 mb-1">Período (Desde / Hasta)</label>
             <div className="flex gap-1.5">
               <input
                 type="date"
                 value={dateRange.start}
                 onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-                className="w-1/2 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 text-[11px] focus:outline-none focus:border-sky-500"
+                className="w-1/2 min-h-[42px] bg-slate-950 border border-slate-800 rounded-xl px-2 text-slate-200 text-[11px] focus:outline-none focus:border-sky-500"
               />
               <input
                 type="date"
                 value={dateRange.end}
                 onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-                className="w-1/2 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 text-[11px] focus:outline-none focus:border-sky-500"
+                className="w-1/2 min-h-[42px] bg-slate-950 border border-slate-800 rounded-xl px-2 text-slate-200 text-[11px] focus:outline-none focus:border-sky-500"
               />
             </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Main KPI Cards Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
-        {/* Atenciones Hoy / Semana / Mes */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Atención Ciudadana</span>
-            <div className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-400 flex items-center justify-center">
-              <Users className="w-4 h-4" />
+      {/* 4 Primary Icon-Driven KPI Tiles */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 sm:p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="w-9 h-9 rounded-xl bg-sky-500/10 text-sky-400 flex items-center justify-center">
+              <Users className="w-5 h-5" />
             </div>
+            <span className="text-[11px] text-slate-400 font-medium">Vecinos</span>
           </div>
-          <div className="text-2xl lg:text-3xl font-extrabold text-white tracking-tight">
+          <div className="text-2xl sm:text-3xl font-extrabold text-white font-mono tabular-nums">
             {kpis.uniqueCitizensAttended}
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            Ciudadanos únicos atendidos
-          </div>
-          <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-            <span>Hoy: <strong className="text-sky-300">{kpis.attendedToday}</strong></span>
-            <span>Semana: <strong className="text-sky-300">{kpis.attendedWeek}</strong></span>
-            <span>Mes: <strong className="text-sky-300">{kpis.attendedMonth}</strong></span>
+          <div className="text-[11px] text-slate-400 mt-1 font-mono tabular-nums">
+            Hoy {kpis.attendedToday} · Mes {kpis.attendedMonth}
           </div>
         </div>
 
-        {/* Trámites Resueltos */}
-        <div className="bg-slate-900 border border-emerald-900/40 rounded-2xl p-4 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-emerald-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Solucionados</span>
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-              <CheckCircle2 className="w-4 h-4" />
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 sm:p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+              <CheckCircle2 className="w-5 h-5" />
             </div>
+            <span className="text-[11px] text-slate-400 font-medium">Resueltos</span>
           </div>
-          <div className="flex items-baseline gap-2">
-            <div className="text-2xl lg:text-3xl font-extrabold text-emerald-400 tracking-tight">
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-2xl sm:text-3xl font-extrabold text-emerald-400 font-mono tabular-nums">
               {kpis.resolvedTickets}
-            </div>
-            <div className="text-sm font-bold text-emerald-500">
-              ({kpis.resolutionRate}%)
-            </div>
+            </span>
+            <span className="text-xs font-bold text-emerald-500 font-mono tabular-nums">
+              {kpis.resolutionRate}%
+            </span>
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            Trámites con respuesta efectiva
-          </div>
-          <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-            <span>Tiempo promedio:</span>
-            <span className="font-bold text-emerald-300">{kpis.averageResolutionDays} días</span>
+          <div className="text-[11px] text-slate-400 mt-1 font-mono tabular-nums">
+            Prom. {kpis.averageResolutionDays} días
           </div>
         </div>
 
-        {/* Trámites Pendientes y Demorados */}
-        <div 
+        <button
+          type="button"
           onClick={onNavigateToTickets}
-          className="bg-slate-900 border border-amber-900/40 rounded-2xl p-4 shadow-sm relative overflow-hidden cursor-pointer hover:border-amber-600 transition"
+          className="text-left bg-slate-900 border border-slate-800 hover:border-amber-500/50 rounded-2xl p-3.5 sm:p-4 transition cursor-pointer"
         >
-          <div className="flex items-center justify-between text-amber-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Pendientes</span>
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center">
-              <Clock className="w-4 h-4" />
+          <div className="flex items-center justify-between mb-2">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
+              <Clock className="w-5 h-5" />
             </div>
+            <span className="text-[11px] text-slate-400 font-medium">Pendientes</span>
           </div>
-          <div className="flex items-baseline gap-2">
-            <div className="text-2xl lg:text-3xl font-extrabold text-amber-400 tracking-tight">
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-2xl sm:text-3xl font-extrabold text-amber-400 font-mono tabular-nums">
               {kpis.pendingTickets}
-            </div>
-            <div className="text-sm font-bold text-amber-500">
-              ({kpis.pendingRate}%)
-            </div>
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            En espera de documentación o turno
-          </div>
-          <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
-            <span className="text-slate-400">Demora &gt; 7 días:</span>
-            <span className={`font-bold ${kpis.delayedTicketsCount > 0 ? 'text-amber-400' : 'text-slate-400'}`}>
-              {kpis.delayedTicketsCount} trámites
+            </span>
+            <span className="text-xs font-bold text-amber-500 font-mono tabular-nums">
+              {kpis.pendingRate}%
             </span>
           </div>
-        </div>
+          <div className="text-[11px] text-slate-400 mt-1 font-mono tabular-nums">
+            &gt;7d: {kpis.delayedTicketsCount}
+          </div>
+        </button>
 
-        {/* Deportes y Participación Comunitaria */}
-        <div 
+        <button
+          type="button"
           onClick={onNavigateToSports}
-          className="bg-slate-900 border border-orange-900/40 rounded-2xl p-4 shadow-sm relative overflow-hidden cursor-pointer hover:border-orange-500 transition"
+          className="text-left bg-slate-900 border border-slate-800 hover:border-orange-500/50 rounded-2xl p-3.5 sm:p-4 transition cursor-pointer"
         >
-          <div className="flex items-center justify-between text-orange-400 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Deportes & Eventos</span>
-            <div className="w-8 h-8 rounded-lg bg-orange-500/10 text-orange-400 flex items-center justify-center">
-              <Trophy className="w-4 h-4" />
+          <div className="flex items-center justify-between mb-2">
+            <div className="w-9 h-9 rounded-xl bg-orange-500/10 text-orange-400 flex items-center justify-center">
+              <Trophy className="w-5 h-5" />
             </div>
+            <span className="text-[11px] text-slate-400 font-medium">Deportes</span>
           </div>
-          <div className="flex items-baseline gap-2">
-            <div className="text-2xl lg:text-3xl font-extrabold text-orange-400 tracking-tight">
-              {kpis.totalSportParticipants}
-            </div>
-            <div className="text-xs text-orange-300 font-medium">
-              participaciones
-            </div>
+          <div className="text-2xl sm:text-3xl font-extrabold text-orange-400 font-mono tabular-nums">
+            {kpis.totalSportParticipants}
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            {kpis.uniqueSportAthletes} deportistas únicos registrados
+          <div className="text-[11px] text-slate-400 mt-1 font-mono tabular-nums">
+            {kpis.totalSportEvents} eventos
           </div>
-          <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-            <span>Torneos y eventos:</span>
-            <span className="font-bold text-orange-300">{kpis.totalSportEvents} realizados</span>
-          </div>
-        </div>
+        </button>
       </div>
 
-      {/* Progress Bars: Resolution, Pending, In Progress Overview */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-              <Activity className="w-4 h-4 text-sky-400" />
-              Estado Global de Solicitudes Municipales
-            </h3>
-            <p className="text-xs text-slate-400">
-              Distribución porcentual sobre {kpis.totalTickets} gestiones ingresadas
-            </p>
-          </div>
-          <div className="flex items-center gap-4 text-xs font-medium">
-            <span className="flex items-center gap-1.5 text-emerald-400">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-              Solucionados ({kpis.resolutionRate}%)
-            </span>
-            <span className="flex items-center gap-1.5 text-sky-400">
-              <span className="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
-              En Proceso ({kpis.inProgressRate}%)
-            </span>
-            <span className="flex items-center gap-1.5 text-amber-400">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-              Pendientes ({kpis.pendingRate}%)
-            </span>
-          </div>
+      {/* Visual Icon Quick-Launcher Grid (Ideal for Mobile & Fast Access) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 sm:p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold text-slate-200">Accesos Rápidos</h3>
+          <span className="text-[11px] text-slate-400 font-mono tabular-nums">
+            {kpis.totalTickets} gestiones
+          </span>
         </div>
 
-        {/* Multi-segment Progress Bar */}
-        <div className="w-full h-4 bg-slate-950 rounded-full overflow-hidden flex border border-slate-800">
-          <div 
-            style={{ width: `${kpis.resolutionRate}%` }} 
-            className="bg-emerald-500 transition-all duration-500 h-full"
-            title={`Solucionados: ${kpis.resolutionRate}%`}
-          />
-          <div 
-            style={{ width: `${kpis.inProgressRate}%` }} 
-            className="bg-sky-500 transition-all duration-500 h-full"
-            title={`En Proceso: ${kpis.inProgressRate}%`}
-          />
-          <div 
-            style={{ width: `${kpis.pendingRate}%` }} 
-            className="bg-amber-500 transition-all duration-500 h-full"
-            title={`Pendientes: ${kpis.pendingRate}%`}
-          />
-        </div>
-      </div>
-
-      {/* Grid: Sector Performance Ranking & Neighborhoods */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Performance by Department / Resolution Rate */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-              <Award className="w-4 h-4 text-amber-400" />
-              Eficacia de Resolución por Área
-            </h3>
-            <span className="text-[11px] text-slate-400 font-medium">
-              Solucionados / Total
-            </span>
-          </div>
-
-          <div className="space-y-3">
-            {departmentKPIs.map(dept => (
-              <div 
-                key={dept.departmentId} 
-                onClick={() => onNavigateToAreas(dept.departmentId)}
-                className="group p-2.5 rounded-xl hover:bg-slate-800/60 transition cursor-pointer border border-transparent hover:border-slate-700/60"
+        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+          {quickModules.map(mod => {
+            const Icon = mod.icon;
+            return (
+              <button
+                key={mod.tab}
+                type="button"
+                onClick={() => handleModuleClick(mod.tab)}
+                className="min-h-[76px] p-2.5 rounded-xl bg-slate-950/80 hover:bg-slate-800/80 active:scale-95 border border-slate-800/90 flex flex-col items-center justify-center gap-1.5 transition cursor-pointer"
               >
-                <div className="flex items-center justify-between text-xs mb-1.5">
-                  <div className="flex items-center gap-2 truncate">
-                    <span className="font-bold text-slate-200 group-hover:text-sky-300 transition truncate">
-                      {dept.departmentName}
-                    </span>
-                    {dept.isInactiveWarning && (
-                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-600/40">
-                        Sin carga reciente
-                      </span>
-                    )}
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${mod.color}`}>
+                  <Icon className="w-5 h-5" />
+                </div>
+                <span className="text-[11px] font-semibold text-slate-200 text-center leading-tight">
+                  {mod.label}
+                </span>
+                {mod.value !== undefined && mod.value !== '' && (
+                  <span className="text-[10px] font-mono tabular-nums text-slate-400">
+                    {mod.value}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Compact Global Progress Strip */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <span className="font-bold text-white">Estado General</span>
+          <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono tabular-nums">
+            <span className="text-emerald-400">Resueltos {kpis.resolutionRate}%</span>
+            <span className="text-sky-400">Proceso {kpis.inProgressRate}%</span>
+            <span className="text-amber-400">Pendientes {kpis.pendingRate}%</span>
+          </div>
+        </div>
+        <div className="w-full h-3 bg-slate-950 rounded-full overflow-hidden flex border border-slate-800">
+          <div style={{ width: `${kpis.resolutionRate}%` }} className="bg-emerald-500 h-full transition-all" />
+          <div style={{ width: `${kpis.inProgressRate}%` }} className="bg-sky-500 h-full transition-all" />
+          <div style={{ width: `${kpis.pendingRate}%` }} className="bg-amber-500 h-full transition-all" />
+        </div>
+      </div>
+
+      {/* 2-Column Visual Lists: Areas & Neighborhoods */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Areas */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-white flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-sky-400" />
+              <span>Áreas con Actividad</span>
+            </h3>
+            <button
+              type="button"
+              onClick={() => onNavigateToAreas()}
+              className="text-[11px] font-semibold text-sky-400 hover:text-sky-300 flex items-center gap-0.5 cursor-pointer"
+            >
+              <span>Ver todas</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="space-y-2.5">
+            {(activeDepartmentKPIs.length > 0 ? activeDepartmentKPIs : departmentKPIs.slice(0, 6)).map(dept => (
+              <button
+                key={dept.departmentId}
+                type="button"
+                onClick={() => onNavigateToAreas(dept.departmentId)}
+                className="w-full text-left p-2.5 rounded-xl bg-slate-950/60 hover:bg-slate-800/70 transition cursor-pointer space-y-1.5"
+              >
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-200 truncate">{dept.departmentName}</div>
+                    <div className="text-[11px] text-slate-400 truncate">{dept.leaderName}</div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[11px] text-slate-400">
-                      {dept.resolvedTickets} / {dept.totalTickets}
-                    </span>
-                    <span className="font-extrabold text-xs text-emerald-400 w-10 text-right">
-                      {dept.resolutionRate}%
-                    </span>
+                  <div className="text-right shrink-0 font-mono tabular-nums">
+                    <div className="text-xs font-bold text-emerald-400">{dept.resolutionRate}%</div>
+                    <div className="text-[10px] text-slate-400">
+                      {dept.resolvedTickets}/{dept.totalTickets}
+                    </div>
                   </div>
                 </div>
-
-                {/* Micro Bar */}
-                <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800/80">
-                  <div 
-                    style={{ width: `${dept.resolutionRate}%` }} 
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      dept.resolutionRate >= 75 ? 'bg-emerald-500' : dept.resolutionRate >= 40 ? 'bg-sky-500' : 'bg-amber-500'
+                <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                  <div
+                    style={{ width: `${dept.resolutionRate}%` }}
+                    className={`h-full rounded-full ${
+                      dept.resolutionRate >= 75
+                        ? 'bg-emerald-500'
+                        : dept.resolutionRate >= 40
+                          ? 'bg-sky-500'
+                          : 'bg-amber-500'
                     }`}
                   />
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
 
-        {/* Neighborhood Distribution (Barrios de Itá Ibaté) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+        {/* Neighborhoods */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+            <h3 className="text-xs font-bold text-white flex items-center gap-2">
               <MapPin className="w-4 h-4 text-sky-400" />
-              Atenciones por Barrio de Itá Ibaté
+              <span>Barrios</span>
             </h3>
-            <span className="text-[11px] text-slate-400 font-medium">
-              Concentración de reclamos
+            <span className="text-[11px] text-slate-400 font-mono tabular-nums">
+              {sortedNeighborhoods.length} activos
             </span>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {sortedNeighborhoods.map(([neighborhood, count]) => {
               const maxCount = sortedNeighborhoods[0] ? sortedNeighborhoods[0][1] : 1;
-              const percentage = Math.round((count / (filteredTickets.length || 1)) * 100);
-
               return (
                 <div key={neighborhood} className="space-y-1">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium text-slate-300">{neighborhood}</span>
-                    <span className="text-slate-400 font-semibold">
-                      {count} solicitudes <span className="text-slate-500 font-normal">({percentage}%)</span>
+                    <span className="font-medium text-slate-200 truncate">{neighborhood}</span>
+                    <span className="font-mono tabular-nums text-slate-300 font-semibold shrink-0">
+                      {count}
                     </span>
                   </div>
-                  <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                  <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden">
                     <div
                       style={{ width: `${(count / maxCount) * 100}%` }}
-                      className="h-full bg-gradient-to-r from-sky-500 to-blue-600 rounded-full transition-all duration-500"
+                      className="h-full bg-sky-500 rounded-full"
                     />
                   </div>
                 </div>
@@ -590,90 +543,11 @@ export const GeneralDashboard: React.FC<{
             })}
 
             {sortedNeighborhoods.length === 0 && (
-              <div className="text-center py-6 text-slate-500 text-xs">
-                No se registraron atenciones con los filtros actuales.
+              <div className="text-center py-8 text-slate-500 text-xs">
+                Sin atenciones registradas con los filtros actuales.
               </div>
             )}
           </div>
-        </div>
-      </div>
-
-      {/* Activity Ranking by Volume of Citizen Attention */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
-          <div>
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-sky-400" />
-              Volumen de Carga y Atención por Dependencia
-            </h3>
-            <p className="text-xs text-slate-400">
-              Identificación de áreas con mayor flujo de ciudadanos y estado de actualización
-            </p>
-          </div>
-          <button
-            onClick={() => onNavigateToAreas()}
-            className="text-xs font-semibold text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer self-start sm:self-auto"
-          >
-            Ver detalle por Secretaría
-            <ArrowUpRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase text-[11px]">
-                <th className="py-2.5 px-3">Área Municipal</th>
-                <th className="py-2.5 px-3">Responsable</th>
-                <th className="py-2.5 px-3 text-center">Atendidos Hoy</th>
-                <th className="py-2.5 px-3 text-center">Mes Actual</th>
-                <th className="py-2.5 px-3 text-center">Total Solicitudes</th>
-                <th className="py-2.5 px-3 text-center">Tasa Resolución</th>
-                <th className="py-2.5 px-3 text-right">Última Carga</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {sortedDeptsByVolume.map(d => (
-                <tr key={d.departmentId} className="hover:bg-slate-800/40 transition">
-                  <td className="py-2.5 px-3 font-semibold text-slate-200">
-                    {d.departmentName}
-                  </td>
-                  <td className="py-2.5 px-3 text-slate-400">
-                    {d.leaderName}
-                  </td>
-                  <td className="py-2.5 px-3 text-center font-bold text-sky-300">
-                    {d.attendedToday}
-                  </td>
-                  <td className="py-2.5 px-3 text-center text-slate-300 font-medium">
-                    {d.attendedMonth}
-                  </td>
-                  <td className="py-2.5 px-3 text-center font-bold text-slate-200">
-                    {d.totalTickets}
-                  </td>
-                  <td className="py-2.5 px-3 text-center">
-                    <span className={`inline-block px-2 py-0.5 rounded font-bold text-[11px] ${
-                      d.resolutionRate >= 70 
-                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' 
-                        : d.resolutionRate >= 40 
-                          ? 'bg-sky-500/10 text-sky-400 border border-sky-500/30'
-                          : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
-                    }`}>
-                      {d.resolutionRate}%
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-3 text-right text-slate-400">
-                    {d.lastActivityDate ? (
-                      <span className={d.daysSinceLastActivity > 3 ? 'text-amber-400 font-medium' : 'text-slate-300'}>
-                        {d.lastActivityDate} {d.daysSinceLastActivity > 3 ? `(hace ${d.daysSinceLastActivity}d)` : '(al día)'}
-                      </span>
-                    ) : (
-                      <span className="text-slate-500">Sin registros</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       </div>
     </div>

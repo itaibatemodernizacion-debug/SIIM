@@ -53,14 +53,15 @@ const AuthenticatedAdminApp: React.FC = () => {
         <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
 
         {/* Viewport Content */}
-        <main className="flex-1 p-4 lg:p-6 overflow-x-hidden">
-          <div className="max-w-7xl mx-auto space-y-6">
+        <main className="flex-1 p-3 sm:p-4 lg:p-6 pb-24 md:pb-6 overflow-x-hidden">
+          <div className="max-w-7xl mx-auto space-y-5">
             {activeTab === 'DASHBOARD' && (
-              <GeneralDashboard 
+              <GeneralDashboard
                 onNavigateToTickets={() => setActiveTab('TICKETS')}
                 onNavigateToSports={() => setActiveTab('SPORTS')}
                 onNavigateToAreas={handleNavigateToAreas}
                 onNavigateToDrive={() => setActiveTab('DRIVE_SYNC')}
+                onNavigateTab={(tab) => setActiveTab(tab)}
               />
             )}
 
@@ -120,23 +121,16 @@ const AuthenticatedAdminApp: React.FC = () => {
         </main>
       </div>
 
-      {/* Municipal Institutional Footer */}
-      <footer className="bg-slate-900 border-t border-slate-800 text-xs text-slate-400 py-3.5 px-4 lg:px-6">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
+      {/* Quiet Institutional Footer */}
+      <footer className="hidden md:block bg-slate-900 border-t border-slate-800 text-xs text-slate-400 py-3 px-6">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Building2 className="w-4 h-4 text-sky-400" />
-            <span className="font-bold text-slate-200">
-              Municipalidad de Itá Ibaté
-            </span>
-            <span>• Corrientes, República Argentina</span>
+            <span className="font-semibold text-slate-200">Municipalidad de Itá Ibaté</span>
+            <span>· Corrientes</span>
           </div>
-
-          <div className="text-[11px] text-slate-500 flex items-center gap-4">
-            <span>Ley 25.326 Protección de Datos</span>
-            <span>•</span>
-            <span>SIMM v2.5 Estable</span>
-            <span>•</span>
-            <span>Dirección de Modernización y Estadísticas</span>
+          <div className="text-[11px] text-slate-500">
+            Dirección de Modernización y Estadísticas · Ley 25.326
           </div>
         </div>
       </footer>

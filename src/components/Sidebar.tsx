@@ -1,35 +1,36 @@
-import { 
-  LayoutDashboard, 
-  Users, 
-  FileText, 
-  Trophy, 
-  Building2, 
-  FileSpreadsheet, 
-  BarChart3, 
+import React, { useState } from 'react';
+import {
+  LayoutDashboard,
+  Users,
+  FileText,
+  Trophy,
+  Building2,
+  FileSpreadsheet,
+  BarChart3,
   Settings,
   Shield,
-  Layers,
   DollarSign,
   IdCard,
   GraduationCap,
-  ChefHat
+  ChefHat,
+  LayoutGrid,
+  X
 } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
 import { useMunicipalData } from '../context/MunicipalDataContext';
 
-export type ActiveTab = 
-  | 'DASHBOARD' 
-  | 'CITIZENS' 
-  | 'TICKETS' 
+export type ActiveTab =
+  | 'DASHBOARD'
+  | 'CITIZENS'
+  | 'TICKETS'
   | 'CONTROL_URBANO'
   | 'RRHH'
   | 'CULTURE'
   | 'ESCUELA_EMPRESA'
   | 'FUNDS'
-  | 'SPORTS' 
-  | 'AREAS' 
-  | 'DRIVE_SYNC' 
-  | 'REPORTS' 
+  | 'SPORTS'
+  | 'AREAS'
+  | 'DRIVE_SYNC'
+  | 'REPORTS'
   | 'ADMIN';
 
 interface SidebarProps {
@@ -38,183 +39,275 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => {
-  const { currentUser, isAdmin } = useAuth();
-  const { kpis, departments, financialKPIs, urbanControlKPIs, employeeKPIs, culturalKPIs, escuelaEmpresaKPIs } = useMunicipalData();
+  const {
+    kpis,
+    departments,
+    financialKPIs,
+    urbanControlKPIs,
+    employeeKPIs,
+    culturalKPIs,
+    escuelaEmpresaKPIs
+  } = useMunicipalData();
 
-  const userDept = departments.find(d => d.id === currentUser?.departmentId);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
 
-  const navItems: { id: ActiveTab; label: string; icon: React.ElementType; badge?: string | number; badgeColor?: string }[] = [
+  const navItems: {
+    id: ActiveTab;
+    label: string;
+    shortLabel: string;
+    icon: React.ElementType;
+    accent: string;
+    count?: string | number;
+  }[] = [
     {
       id: 'DASHBOARD',
-      label: 'Dashboard General',
+      label: 'Inicio',
+      shortLabel: 'Inicio',
       icon: LayoutDashboard,
-      badge: `${kpis.resolutionRate}%`,
-      badgeColor: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-    },
-    {
-      id: 'CITIZENS',
-      label: 'Registro Ciudadano',
-      icon: Users,
-      badge: kpis.totalCitizens,
-      badgeColor: 'bg-slate-700 text-slate-300'
+      accent: 'text-sky-400',
+      count: `${kpis.resolutionRate}%`
     },
     {
       id: 'TICKETS',
-      label: 'Trámites y Solicitudes',
+      label: 'Trámites',
+      shortLabel: 'Trámites',
       icon: FileText,
-      badge: kpis.pendingTickets > 0 ? kpis.pendingTickets : undefined,
-      badgeColor: 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+      accent: 'text-amber-400',
+      count: kpis.totalTickets
     },
     {
-      id: 'CONTROL_URBANO',
-      label: 'Control Urbano & Vial',
-      icon: Shield,
-      badge: `${urbanControlKPIs.totalLicenses} carnets`,
-      badgeColor: 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
-    },
-    {
-      id: 'RRHH',
-      label: 'Recursos Humanos (RRHH)',
-      icon: IdCard,
-      badge: `${employeeKPIs.totalEmployees} pers.`,
-      badgeColor: 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-    },
-    {
-      id: 'CULTURE',
-      label: 'Cultura y Cursos',
-      icon: GraduationCap,
-      badge: `${culturalKPIs.totalStudents} al.`,
-      badgeColor: 'bg-pink-500/20 text-pink-300 border border-pink-500/30'
-    },
-    {
-      id: 'ESCUELA_EMPRESA',
-      label: 'Escuela Empresa',
-      icon: ChefHat,
-      badge: `${escuelaEmpresaKPIs.totalStudents} al.`,
-      badgeColor: 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-    },
-    {
-      id: 'FUNDS',
-      label: 'Control de Fondos',
-      icon: DollarSign,
-      badge: financialKPIs.departmentsWithPendingSettlements > 0 ? `${financialKPIs.departmentsWithPendingSettlements} pend.` : undefined,
-      badgeColor: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-    },
-    {
-      id: 'SPORTS',
-      label: 'Módulo de Deportes',
-      icon: Trophy,
-      badge: kpis.totalSportParticipants,
-      badgeColor: 'bg-orange-500/20 text-orange-300 border border-orange-500/30'
+      id: 'CITIZENS',
+      label: 'Vecinos',
+      shortLabel: 'Vecinos',
+      icon: Users,
+      accent: 'text-cyan-400',
+      count: kpis.totalCitizens
     },
     {
       id: 'AREAS',
-      label: 'Áreas y Dependencias',
+      label: 'Áreas',
+      shortLabel: 'Áreas',
       icon: Building2,
-      badge: departments.filter(d => d.active).length,
-      badgeColor: 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+      accent: 'text-indigo-400',
+      count: departments.filter(d => d.active).length
+    },
+    {
+      id: 'CONTROL_URBANO',
+      label: 'Control Vial',
+      shortLabel: 'Vial',
+      icon: Shield,
+      accent: 'text-sky-400',
+      count: urbanControlKPIs.totalLicenses
+    },
+    {
+      id: 'SPORTS',
+      label: 'Deportes',
+      shortLabel: 'Deportes',
+      icon: Trophy,
+      accent: 'text-orange-400',
+      count: kpis.totalSportParticipants
+    },
+    {
+      id: 'CULTURE',
+      label: 'Cultura',
+      shortLabel: 'Cultura',
+      icon: GraduationCap,
+      accent: 'text-pink-400',
+      count: culturalKPIs.totalStudents
+    },
+    {
+      id: 'ESCUELA_EMPRESA',
+      label: 'Esc. Empresa',
+      shortLabel: 'Esc. Emp.',
+      icon: ChefHat,
+      accent: 'text-amber-400',
+      count: escuelaEmpresaKPIs.totalStudents
+    },
+    {
+      id: 'RRHH',
+      label: 'RRHH',
+      shortLabel: 'RRHH',
+      icon: IdCard,
+      accent: 'text-blue-400',
+      count: employeeKPIs.totalEmployees
+    },
+    {
+      id: 'FUNDS',
+      label: 'Fondos',
+      shortLabel: 'Fondos',
+      icon: DollarSign,
+      accent: 'text-emerald-400',
+      count: financialKPIs.departmentsWithPendingSettlements > 0 ? financialKPIs.departmentsWithPendingSettlements : undefined
     },
     {
       id: 'DRIVE_SYNC',
-      label: 'Drive & Planillas Excel',
+      label: 'Google Drive',
+      shortLabel: 'Drive',
       icon: FileSpreadsheet,
-      badge: 'Auto',
-      badgeColor: 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+      accent: 'text-emerald-400'
     },
     {
       id: 'REPORTS',
-      label: 'Informes y Exportación',
-      icon: BarChart3
+      label: 'Informes',
+      shortLabel: 'Informes',
+      icon: BarChart3,
+      accent: 'text-violet-400'
     },
     {
       id: 'ADMIN',
-      label: 'Administración General',
-      icon: Settings
+      label: 'Admin',
+      shortLabel: 'Admin',
+      icon: Settings,
+      accent: 'text-slate-300'
     }
   ];
 
+  const primaryBottomTabs: ActiveTab[] = ['DASHBOARD', 'TICKETS', 'AREAS', 'DRIVE_SYNC'];
+  const isOverflowActive = !primaryBottomTabs.includes(activeTab);
+
+  const handleSelectTab = (tab: ActiveTab) => {
+    setActiveTab(tab);
+    setShowMobileMenu(false);
+  };
+
   return (
-    <aside className="w-full md:w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0">
-      {/* Navigation Menu */}
-      <div className="p-3 space-y-1">
-        {/* Crest mini card */}
-        <div className="p-2.5 mb-2 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center gap-2.5">
-          <img 
-            src="/logo.png" 
-            alt="Escudo Itá Ibaté" 
-            className="w-8 h-8 object-contain shrink-0" 
-          />
-          <div className="overflow-hidden">
-            <div className="text-[11px] font-black text-white uppercase tracking-tight truncate">
-              ITÁ IBATÉ
-            </div>
-            <div className="text-[9px] font-semibold text-sky-400 uppercase tracking-wider truncate">
-              Gestión Municipal
-            </div>
-          </div>
-        </div>
+    <>
+      {/* Desktop Slim Icon-Forward Sidebar */}
+      <aside className="hidden md:flex md:w-56 lg:w-60 bg-slate-900 border-r border-slate-800 flex-col justify-between shrink-0">
+        <nav className="p-2.5 space-y-0.5">
+          {navItems.map(item => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleSelectTab(item.id)}
+                className={`w-full min-h-[40px] flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+                  isActive
+                    ? 'bg-sky-600 text-white font-semibold'
+                    : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : item.accent}`} />
+                  <span className="truncate whitespace-nowrap">{item.label}</span>
+                </div>
+                {item.count !== undefined && (
+                  <span
+                    className={`text-[11px] font-mono tabular-nums shrink-0 ${
+                      isActive ? 'text-sky-100' : 'text-slate-400'
+                    }`}
+                  >
+                    {item.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
 
-        <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-          Navegación del Sistema
+        <div className="p-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+          <span>Resolución</span>
+          <span className="font-mono tabular-nums font-bold text-emerald-400">
+            {kpis.resolutionRate}%
+          </span>
         </div>
+      </aside>
 
-        {navItems.map(item => {
+      {/* Mobile Fixed Bottom Tab Bar (Thumb-Zone Navigation) */}
+      <nav
+        aria-label="Navegación principal móvil"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-16 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 grid grid-cols-5 items-center px-1"
+      >
+        {primaryBottomTabs.map(tabId => {
+          const item = navItems.find(n => n.id === tabId)!;
           const Icon = item.icon;
-          const isActive = activeTab === item.id;
-
+          const isActive = activeTab === item.id && !showMobileMenu;
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-medium transition-all cursor-pointer ${
-                isActive
-                  ? 'bg-sky-600 text-white font-semibold shadow-lg shadow-sky-900/30'
-                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              type="button"
+              onClick={() => handleSelectTab(item.id)}
+              className={`min-h-[48px] flex flex-col items-center justify-center gap-0.5 rounded-xl transition cursor-pointer ${
+                isActive ? 'text-sky-400' : 'text-slate-400 active:text-white'
               }`}
             >
-              <div className="flex items-center gap-2.5 truncate">
-                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                <span className="truncate">{item.label}</span>
-              </div>
-
-              {item.badge !== undefined && (
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0 ${
-                  isActive ? 'bg-white/20 text-white' : (item.badgeColor || 'bg-slate-800 text-slate-300')
-                }`}>
-                  {item.badge}
-                </span>
-              )}
+              <Icon className="w-5 h-5" />
+              <span className="text-[10px] font-semibold tracking-tight whitespace-nowrap">
+                {item.shortLabel}
+              </span>
             </button>
           );
         })}
-      </div>
 
-      {/* Area Status Card at bottom */}
-      <div className="p-3 border-t border-slate-800">
-        <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800 text-xs">
-          <div className="flex items-center gap-2 mb-2 text-slate-400">
-            <Layers className="w-3.5 h-3.5 text-sky-400" />
-            <span className="font-semibold text-[11px] text-slate-300 uppercase">Sector Activo</span>
-          </div>
-          
-          <div className="font-bold text-white truncate">
-            {isAdmin ? 'Monitoreo Global (Todas las Áreas)' : (userDept?.name || 'Área Asignada')}
-          </div>
-          
-          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-400">
-            <Shield className="w-3 h-3 text-sky-400" />
-            <span>Rol:</span>
-            <span className="font-medium text-sky-300">
-              {currentUser?.role === 'ADMIN_GENERAL' ? 'Administrador' : 'Responsable'}
-            </span>
-          </div>
+        <button
+          type="button"
+          onClick={() => setShowMobileMenu(prev => !prev)}
+          className={`min-h-[48px] flex flex-col items-center justify-center gap-0.5 rounded-xl transition cursor-pointer ${
+            showMobileMenu || isOverflowActive ? 'text-sky-400' : 'text-slate-400 active:text-white'
+          }`}
+        >
+          {showMobileMenu ? <X className="w-5 h-5" /> : <LayoutGrid className="w-5 h-5" />}
+          <span className="text-[10px] font-semibold tracking-tight whitespace-nowrap">
+            {showMobileMenu ? 'Cerrar' : 'Módulos'}
+          </span>
+        </button>
+      </nav>
 
-          <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-            <span>Resolución Global:</span>
-            <span className="font-bold text-emerald-400">{kpis.resolutionRate}%</span>
+      {/* Mobile Bottom Sheet Icon App Launcher */}
+      {showMobileMenu && (
+        <div
+          className="md:hidden fixed inset-0 z-30 bg-black/70 backdrop-blur-sm flex items-end pb-16"
+          onClick={() => setShowMobileMenu(false)}
+        >
+          <div
+            className="w-full bg-slate-900 border-t border-slate-700 rounded-t-3xl p-4 pb-5 shadow-2xl space-y-3 max-h-[75vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-10 h-1 bg-slate-700 rounded-full mx-auto" />
+            <div className="flex items-center justify-between px-1">
+              <span className="text-xs font-bold text-white">Módulos del Sistema</span>
+              <button
+                type="button"
+                onClick={() => setShowMobileMenu(false)}
+                className="p-1.5 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2.5">
+              {navItems.map(item => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleSelectTab(item.id)}
+                    className={`min-h-[78px] p-2.5 rounded-2xl border flex flex-col items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer ${
+                      isActive
+                        ? 'bg-sky-600/20 border-sky-500 text-white'
+                        : 'bg-slate-950/90 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    <Icon className={`w-6 h-6 ${isActive ? 'text-sky-400' : item.accent}`} />
+                    <span className="text-[11px] font-semibold text-center leading-tight">
+                      {item.label}
+                    </span>
+                    {item.count !== undefined && (
+                      <span className="text-[10px] font-mono tabular-nums text-slate-400">
+                        {item.count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
-      </div>
-    </aside>
+      )}
+    </>
   );
 };
