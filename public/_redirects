@@ -1,1 +1,2 @@
-/*    /index.html   200
+/api/drive/public/*  /.netlify/functions/drive-public/:splat  200!
+/*                   /index.html                              200

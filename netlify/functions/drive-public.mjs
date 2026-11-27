@@ -61,11 +61,19 @@ const parseEmbeddedFolderHtml = (html) => {
 
 export async function handler(event) {
   const rawPath = event.path || '';
-  const folderMatch = rawPath.match(/\/api\/drive\/public\/folder\/([^/?#]+)/);
-  const downloadMatch = rawPath.match(/\/api\/drive\/public\/download\/([^/?#]+)/);
+  const qs = event.queryStringParameters || {};
 
-  if (folderMatch) {
-    const folderId = decodeURIComponent(folderMatch[1]).trim();
+  const folderPathMatch = rawPath.match(/\/folder\/([^/?#]+)/);
+  const downloadPathMatch = rawPath.match(/\/download\/([^/?#]+)/);
+
+  const isFolderAction = Boolean(folderPathMatch) || qs.action === 'folder';
+  const isDownloadAction = Boolean(downloadPathMatch) || qs.action === 'download';
+
+  if (isFolderAction) {
+    const folderId = decodeURIComponent(
+      (folderPathMatch ? folderPathMatch[1] : qs.id || '')
+    ).trim();
+
     if (!DRIVE_ID_REGEX.test(folderId)) {
       return {
         statusCode: 400,
@@ -117,8 +125,11 @@ export async function handler(event) {
     }
   }
 
-  if (downloadMatch) {
-    const fileId = decodeURIComponent(downloadMatch[1]).trim();
+  if (isDownloadAction) {
+    const fileId = decodeURIComponent(
+      (downloadPathMatch ? downloadPathMatch[1] : qs.id || '')
+    ).trim();
+
     if (!DRIVE_ID_REGEX.test(fileId)) {
       return {
         statusCode: 400,
@@ -127,7 +138,7 @@ export async function handler(event) {
       };
     }
 
-    const mimeType = String(event.queryStringParameters?.mimeType || '').trim();
+    const mimeType = String(qs.mimeType || '').trim();
     const isGoogleSheet = mimeType === DRIVE_MIME_TYPES.GOOGLE_SHEET;
 
     try {

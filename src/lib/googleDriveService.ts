@@ -104,10 +104,65 @@ const ensureJsonResponse = async (res: Response, endpointLabel: string) => {
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('application/json')) {
     throw new Error(
-      `El servidor (${endpointLabel}) no respondió con datos JSON. Si publicó la app en un hosting estático sin funciones de servidor, utilice el conector de Google Apps Script o la Carga Múltiple de Excel.`
+      `El servidor (${endpointLabel}) no respondió con datos JSON. Si publicó la app en Netlify arrastrando solo la carpeta dist (sin conectar el repositorio Git), las funciones de servidor no se despliegan; conecte el repositorio en Netlify o utilice el conector de Google Apps Script.`
     );
   }
   return res.json();
+};
+
+const fetchPublicFolderJson = async (folderId: string) => {
+  const primaryUrl = `/api/drive/public/folder/${encodeURIComponent(folderId)}`;
+  let res = await fetch(primaryUrl);
+  const ct = res.headers.get('content-type') || '';
+
+  // Fallback directly to Netlify Function endpoint if SPA rewrite intercepted /api/*
+  if (!ct.includes('application/json')) {
+    const netlifyFallbackUrl = `/.netlify/functions/drive-public?action=folder&id=${encodeURIComponent(folderId)}`;
+    const fallbackRes = await fetch(netlifyFallbackUrl);
+    const fallbackCt = fallbackRes.headers.get('content-type') || '';
+    if (fallbackCt.includes('application/json') || fallbackRes.ok) {
+      res = fallbackRes;
+    }
+  }
+
+  if (!res.ok) {
+    await handlePublicProxyError(res);
+  }
+
+  return ensureJsonResponse(res, '/api/drive/public/folder');
+};
+
+const fetchPublicDownloadBuffer = async (file: Pick<DriveFileItem, 'id' | 'name' | 'mimeType'>): Promise<ArrayBuffer> => {
+  const params = new URLSearchParams({ mimeType: file.mimeType || '' });
+  const primaryUrl = `/api/drive/public/download/${encodeURIComponent(file.id)}?${params.toString()}`;
+  let res = await fetch(primaryUrl);
+  const ct = res.headers.get('content-type') || '';
+
+  if (ct.includes('text/html')) {
+    const fallbackParams = new URLSearchParams({
+      action: 'download',
+      id: file.id,
+      mimeType: file.mimeType || ''
+    });
+    const fallbackRes = await fetch(`/.netlify/functions/drive-public?${fallbackParams.toString()}`);
+    const fallbackCt = fallbackRes.headers.get('content-type') || '';
+    if (!fallbackCt.includes('text/html')) {
+      res = fallbackRes;
+    }
+  }
+
+  if (!res.ok) {
+    await handlePublicProxyError(res);
+  }
+
+  const finalCt = res.headers.get('content-type') || '';
+  if (finalCt.includes('text/html')) {
+    throw new Error(
+      `No se pudo descargar "${file.name}" directamente. Verifique que el archivo tenga permiso "Cualquier persona con el enlace: Lector" y que las Netlify Functions estén desplegadas.`
+    );
+  }
+
+  return await res.arrayBuffer();
 };
 
 export interface DriveFileWithFolder {
@@ -149,12 +204,7 @@ export const listDriveSpreadsheetsAndFolders = async (
       return [];
     }
 
-    const res = await fetch(`/api/drive/public/folder/${encodeURIComponent(folderId)}`);
-    if (!res.ok) {
-      await handlePublicProxyError(res);
-    }
-
-    const data = await ensureJsonResponse(res, '/api/drive/public/folder');
+    const data = await fetchPublicFolderJson(folderId);
     let files = (data.files || []) as DriveFileItem[];
 
     if (options?.searchText && options.searchText.trim()) {
@@ -274,11 +324,7 @@ export const getDriveFileMetadata = async (
   }
 
   if (isPublicProxyAuth(auth)) {
-    const res = await fetch(`/api/drive/public/folder/${encodeURIComponent(fileId)}`);
-    if (!res.ok) {
-      await handlePublicProxyError(res);
-    }
-    const data = await ensureJsonResponse(res, '/api/drive/public/folder');
+    const data = await fetchPublicFolderJson(fileId);
     return {
       id: fileId,
       name: data.folderName || 'Carpeta Oficial Municipal',
@@ -326,20 +372,7 @@ export const downloadDriveSpreadsheetBuffer = async (
   }
 
   if (isPublicProxyAuth(auth)) {
-    const params = new URLSearchParams({ mimeType: file.mimeType || '' });
-    const res = await fetch(
-      `/api/drive/public/download/${encodeURIComponent(file.id)}?${params.toString()}`
-    );
-    if (!res.ok) {
-      await handlePublicProxyError(res);
-    }
-    const ct = res.headers.get('content-type') || '';
-    if (ct.includes('text/html')) {
-      throw new Error(
-        `No se pudo descargar "${file.name}" directamente. Verifique que el archivo tenga permiso "Cualquier persona con el enlace: Lector".`
-      );
-    }
-    return await res.arrayBuffer();
+    return fetchPublicDownloadBuffer(file);
   }
 
   const token = getOAuthToken(auth);
