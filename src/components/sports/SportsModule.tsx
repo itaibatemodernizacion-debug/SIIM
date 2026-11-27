@@ -245,7 +245,7 @@ export const SportsModule: React.FC = () => {
       name: 'Dirección General de Deportes y Recreación',
       shortName: 'Deportes y Recreación',
       category: 'DIRECCION_GENERAL' as const,
-      leaderName: 'Prof. Rolando Morales',
+      leaderName: 'Director General de Deportes y Recreación',
       leaderEmail: 'deportes@itaibate.gob.ar',
       color: 'orange',
       icon: 'Trophy',

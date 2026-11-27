@@ -453,7 +453,11 @@ export const TicketManagement: React.FC<{ initialCitizenForTicket?: Citizen | nu
                     {departments.find(d => d.id === selectedTicket.departmentId)?.name}
                   </div>
                   <div className="text-[11px] text-slate-400">
-                    Responsable: <strong>{selectedTicket.responsibleName}</strong>
+                    Responsable:{' '}
+                    <strong>
+                      {departments.find(d => d.id === selectedTicket.departmentId)?.leaderName ||
+                        selectedTicket.responsibleName}
+                    </strong>
                   </div>
                   <div className="text-[11px] text-slate-400">
                     Ingresado: <strong>{selectedTicket.startDate}</strong>

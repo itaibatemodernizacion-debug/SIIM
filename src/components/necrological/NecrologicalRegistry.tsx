@@ -51,10 +51,17 @@ export const NecrologicalRegistry: React.FC = () => {
     addNecrologicalRecord, 
     updateNecrologicalRecord, 
     deleteNecrologicalRecord,
-    necrologicalKPIs 
+    necrologicalKPIs,
+    departments
   } = useMunicipalData();
 
   const { currentUser, maskSensitiveData } = useAuth();
+  const socialDept =
+    departments.find(d => d.id === 'dir-gen-asistencia-social') ||
+    departments.find(d => d.id === 'sec-social');
+  const defaultSocialOfficer = socialDept
+    ? `${socialDept.leaderName} (${socialDept.shortName})`
+    : currentUser?.name || 'Desarrollo Social';
 
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -123,7 +130,7 @@ export const NecrologicalRegistry: React.FC = () => {
     nicheStatus: 'CONCESION_TEMPORAL',
     burialDate: new Date().toISOString().split('T')[0],
     concessionExpirationDate: '',
-    responsibleOfficer: currentUser?.name || 'Lic. Silvina Fernández (Sec. Desarrollo Social y Humano)',
+    responsibleOfficer: defaultSocialOfficer,
     notes: ''
   });
 
@@ -185,7 +192,7 @@ export const NecrologicalRegistry: React.FC = () => {
       nicheStatus: 'CONCESION_TEMPORAL',
       burialDate: new Date().toISOString().split('T')[0],
       concessionExpirationDate: `${new Date().getFullYear() + 5}-${new Date().toISOString().split('T')[0].substring(5)}`,
-      responsibleOfficer: currentUser?.name || 'Lic. Silvina Fernández (Sec. Desarrollo Social y Humano)',
+      responsibleOfficer: defaultSocialOfficer,
       notes: ''
     });
     setShowFormModal(true);

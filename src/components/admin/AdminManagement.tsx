@@ -872,17 +872,34 @@ export const AdminManagement: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {users.map(u => (
+                {users.map(u => {
+                  const linkedDept = u.departmentId
+                    ? departments.find(d => d.id === u.departmentId)
+                    : undefined;
+                  const displayName =
+                    u.role !== 'ADMIN_GENERAL' && linkedDept?.leaderName
+                      ? linkedDept.leaderName
+                      : u.name;
+                  const displayEmail =
+                    u.role !== 'ADMIN_GENERAL' && linkedDept?.leaderEmail
+                      ? linkedDept.leaderEmail
+                      : u.email;
+                  const displayPosition =
+                    u.role !== 'ADMIN_GENERAL' && linkedDept?.leaderTitle
+                      ? linkedDept.leaderTitle
+                      : u.position;
+
+                  return (
                   <tr key={u.id} className="hover:bg-slate-800/40 transition">
                     <td className="py-3 px-3.5 font-bold text-white">
-                      {u.name}
+                      {displayName}
                     </td>
                     <td className="py-3 px-3 text-slate-300 font-mono">
-                      <div>@{u.username || u.email.split('@')[0]}</div>
-                      <div className="text-[10px] text-slate-500">{u.email}</div>
+                      <div>@{u.username || displayEmail.split('@')[0]}</div>
+                      <div className="text-[10px] text-slate-500">{displayEmail}</div>
                     </td>
                     <td className="py-3 px-3 text-slate-400">
-                      {u.position}
+                      {displayPosition}
                     </td>
                     <td className="py-3 px-3">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -907,7 +924,8 @@ export const AdminManagement: React.FC = () => {
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

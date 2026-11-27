@@ -61,10 +61,14 @@ export const UrbanControlModule: React.FC = () => {
     trafficCheckpoints, 
     addTrafficCheckpoint,
     urbanControlKPIs,
-    findCitizenByDni 
+    findCitizenByDni,
+    departments
   } = useMunicipalData();
 
   const { maskSensitiveData } = useAuth();
+  const securityLeaderName =
+    departments.find(d => d.id === 'dir-gen-seguridad' || d.moduleType === 'CONTROL_URBANO')
+      ?.leaderName || 'Director General de Seguridad Ciudadana';
 
   // Active sub-section
   const [activeTab, setActiveTab] = useState<'LICENSES' | 'FINES' | 'COMMERCIAL' | 'CHECKPOINTS'>('LICENSES');
@@ -124,7 +128,7 @@ export const UrbanControlModule: React.FC = () => {
     status: 'ENTREGADO',
     feeAmount: 8500,
     isFeePaid: true,
-    officerInCharge: 'Comisario (R) Hugo Ojeda',
+    officerInCharge: securityLeaderName,
     notes: ''
   });
 
@@ -167,7 +171,7 @@ export const UrbanControlModule: React.FC = () => {
     status: 'ACTIVA',
     vehicleImpounded: false,
     impoundLotNumber: '',
-    officerBadge: 'Insp. Leg. 104 - Hugo Ojeda',
+    officerBadge: securityLeaderName,
     notes: ''
   });
 
@@ -236,7 +240,7 @@ export const UrbanControlModule: React.FC = () => {
     neighborhood: ITA_IBATE_NEIGHBORHOODS[11],
     type: 'CONTROL_GENERAL_VEHICULAR',
     shift: 'TARDE',
-    leadOfficer: 'Comisario (R) Hugo Ojeda',
+    leadOfficer: securityLeaderName,
     inspectorsCount: 4,
     policeSupport: true,
     vehiclesChecked: 120,

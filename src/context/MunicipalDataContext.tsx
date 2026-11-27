@@ -675,6 +675,42 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, []);
 
+  // Keep tickets and fund allocations aligned with Admin's authoritative department leaders
+  useEffect(() => {
+    if (!departments.length) return;
+    const deptById = new Map(departments.map(d => [d.id, d]));
+
+    setTickets(prev => {
+      let changed = false;
+      const next = prev.map(t => {
+        const dept = deptById.get(t.departmentId);
+        if (dept && dept.leaderName && t.responsibleName !== dept.leaderName) {
+          changed = true;
+          return { ...t, responsibleName: dept.leaderName };
+        }
+        return t;
+      });
+      return changed ? next : prev;
+    });
+
+    setFundAllocations(prev => {
+      let changed = false;
+      const next = prev.map(f => {
+        const dept = deptById.get(f.departmentId);
+        if (dept && dept.leaderName && f.receiverName !== dept.leaderName) {
+          changed = true;
+          return {
+            ...f,
+            receiverName: dept.leaderName,
+            receiverDni: dept.leaderDni || f.receiverDni
+          };
+        }
+        return f;
+      });
+      return changed ? next : prev;
+    });
+  }, [departments]);
+
   // Helper to immediately persist department & authority edits both locally and in Firestore
   const persistDepartmentsChange = (updater: (prev: Department[]) => Department[]) => {
     setDepartments(prev => {
@@ -1230,7 +1266,10 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
       description: ticketData.description,
       startDate: todayStr,
       resolvedDate: isResolved ? todayStr : undefined,
-      responsibleName: currentUser?.name || 'Personal Municipal',
+      responsibleName:
+        departments.find(d => d.id === ticketData.departmentId)?.leaderName ||
+        currentUser?.name ||
+        'Personal Municipal',
       status,
       isResolved,
       priority: ticketData.priority || 'MEDIA',
@@ -1455,7 +1494,10 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
           description: r.description,
           startDate: r.startDate || new Date().toISOString().split('T')[0],
           resolvedDate: isResolved ? (r.resolvedDate || r.startDate || new Date().toISOString().split('T')[0]) : undefined,
-          responsibleName: r.responsibleName || 'Operador de Planilla',
+          responsibleName:
+            departments.find(d => d.id === targetDepartmentId)?.leaderName ||
+            r.responsibleName ||
+            'Operador de Planilla',
           status: statusVal,
           isResolved,
           priority: 'MEDIA',
@@ -1988,7 +2030,10 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
           description: r.description,
           startDate: r.startDate || todayStr,
           resolvedDate: isResolved ? (r.resolvedDate || r.startDate || todayStr) : undefined,
-          responsibleName: r.responsibleName || 'Operador de Planilla',
+          responsibleName:
+            departments.find(d => d.id === targetDepartmentId)?.leaderName ||
+            r.responsibleName ||
+            'Operador de Planilla',
           status: statusVal,
           isResolved,
           priority: 'MEDIA',

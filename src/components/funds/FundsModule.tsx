@@ -83,8 +83,8 @@ export const FundsModule: React.FC = () => {
   // New Fund Allocation form state
   const [allocationForm, setAllocationForm] = useState({
     departmentId: departments[0]?.id || '',
-    receiverName: '',
-    receiverDni: '',
+    receiverName: departments[0]?.leaderName || '',
+    receiverDni: departments[0]?.leaderDni || '',
     deliveryDate: new Date().toISOString().split('T')[0],
     voucherNumber: `EXP-FON-${new Date().getFullYear()}-${String(fundAllocations.length + 1).padStart(4, '0')}`,
     amountAssigned: '',
@@ -801,8 +801,8 @@ export const FundsModule: React.FC = () => {
                           {dept?.name || item.departmentId}
                         </td>
                         <td className="py-3 px-3 text-slate-300">
-                          <div>{item.receiverName}</div>
-                          <div className="text-[10px] text-slate-500 font-mono">DNI: {maskText(item.receiverDni)}</div>
+                          <div>{dept?.leaderName || item.receiverName}</div>
+                          <div className="text-[10px] text-slate-500 font-mono">DNI: {maskText(dept?.leaderDni || item.receiverDni)}</div>
                         </td>
                         <td className="py-3 px-3 text-right font-medium text-slate-300">
                           ${item.amountAssigned.toLocaleString('es-AR')}
@@ -1804,7 +1804,9 @@ export const FundsModule: React.FC = () => {
             <div className="pt-12 grid grid-cols-2 gap-12 text-center text-xs">
               <div className="border-t border-slate-400 pt-2">
                 <p className="font-bold text-slate-900">Secretaría de Hacienda y Finanzas</p>
-                <p className="text-[11px] text-slate-500">C.P.N. Laura Gómez</p>
+                <p className="text-[11px] text-slate-500">
+                  {departments.find(d => d.id === 'sec-hacienda')?.leaderName || 'Titular Secretaría de Hacienda'}
+                </p>
               </div>
 
               <div className="border-t border-slate-400 pt-2">
