@@ -1,5 +1,8 @@
 import React from 'react';
-import { useMunicipalData } from '../../context/MunicipalDataContext';
+import {
+  useMunicipalData,
+  OFFICIAL_MUNICIPAL_DRIVE_URL
+} from '../../context/MunicipalDataContext';
 import { ITA_IBATE_NEIGHBORHOODS } from '../../data/initialData';
 import { 
   Users, 
@@ -18,7 +21,12 @@ import {
   Award,
   Zap,
   Activity,
-  Trash2
+  Trash2,
+  FolderSync,
+  RefreshCw,
+  ExternalLink,
+  Cloud,
+  X
 } from 'lucide-react';
 import { EmptyDatabaseModal } from '../common/EmptyDatabaseModal';
 
@@ -46,8 +54,24 @@ export const GeneralDashboard: React.FC<{
     selectedNeighborhood,
     setSelectedNeighborhood,
     selectedStatus,
-    setSelectedStatus
+    setSelectedStatus,
+    isDriveSyncing,
+    driveSyncProgress,
+    driveSyncError,
+    lastDriveSyncInfo,
+    syncFromOfficialDrive,
+    clearDriveSyncError
   } = useMunicipalData();
+
+  const formattedLastDriveSync = lastDriveSyncInfo?.timestamp
+    ? new Date(lastDriveSyncInfo.timestamp).toLocaleString('es-AR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    : null;
 
   // Calculate neighborhood breakdown
   const neighborhoodCounts: Record<string, number> = {};
@@ -100,12 +124,23 @@ export const GeneralDashboard: React.FC<{
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
+            onClick={() => syncFromOfficialDrive({ replaceExisting: true })}
+            disabled={isDriveSyncing}
+            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-extrabold shadow-md shadow-emerald-950/50 transition cursor-pointer disabled:opacity-60"
+            title="Actualiza todo el sistema en tiempo real con las planillas Excel de cada Secretaría y Dirección en Google Drive"
+          >
+            <RefreshCw className={`w-4 h-4 ${isDriveSyncing ? 'animate-spin' : ''}`} />
+            <span>{isDriveSyncing ? 'Actualizando desde Drive...' : 'Actualizar desde Drive'}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setShowEmptyDbModal(true)}
             className="flex items-center gap-2 px-3.5 py-2.5 bg-rose-950/70 hover:bg-rose-600 text-rose-200 hover:text-white border border-rose-500/40 rounded-xl text-xs font-bold shadow-sm transition cursor-pointer"
-            title="Vaciar los datos demo para comenzar a trabajar con Google Drive"
+            title="Vaciar los datos operativos actuales (conserva autoridades y credenciales)"
           >
             <Trash2 className="w-4 h-4" />
-            <span>Vaciar Base de Datos</span>
+            <span>Vaciar Base</span>
           </button>
 
           <div className="flex items-center gap-3 bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800/80">
@@ -120,6 +155,94 @@ export const GeneralDashboard: React.FC<{
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Live Google Drive Sync Status Banner */}
+      <div className="bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-4 shadow-sm space-y-2.5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+              {isDriveSyncing ? (
+                <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin" />
+              ) : (
+                <Cloud className="w-4 h-4 text-emerald-400" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-xs font-bold text-white">
+                  Base Sincronizada con Google Drive: {lastDriveSyncInfo?.folderName || 'Sistema de Gestión'}
+                </h3>
+                {lastDriveSyncInfo && !isDriveSyncing && (
+                  <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-full">
+                    {lastDriveSyncInfo.filesImported} planillas • {lastDriveSyncInfo.totalRecords} registros activos
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-300 mt-0.5">
+                {isDriveSyncing
+                  ? driveSyncProgress || 'Leyendo carpetas de Secretarías y Direcciones en Google Drive...'
+                  : lastDriveSyncInfo
+                    ? `Última actualización automática desde los Excel oficiales: ${formattedLastDriveSync}. Cada vez que suban o modifiquen un Excel en Drive, presione "Actualizar desde Drive".`
+                    : 'Conectado a la carpeta compartida oficial. Presione "Actualizar desde Drive" para cargar todos los Excel de las Secretarías y Direcciones.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <a
+              href={OFFICIAL_MUNICIPAL_DRIVE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 rounded-lg text-[11px] font-semibold transition"
+            >
+              <span>Abrir Carpeta Drive</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+            {onNavigateToDrive && (
+              <button
+                type="button"
+                onClick={onNavigateToDrive}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-[11px] font-semibold transition cursor-pointer"
+              >
+                <FolderSync className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Ver Planillas</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {driveSyncError && (
+          <div className="flex items-center justify-between gap-2 bg-rose-950/60 border border-rose-500/40 rounded-xl px-3 py-2 text-[11px] text-rose-200">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+              <span>{driveSyncError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={clearDriveSyncError}
+              className="text-rose-300 hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {lastDriveSyncInfo && Object.keys(lastDriveSyncInfo.breakdown).length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-800/80">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mr-1">
+              Módulos cargados:
+            </span>
+            {Object.entries(lastDriveSyncInfo.breakdown).map(([label, count]) => (
+              <span
+                key={label}
+                className="px-2 py-0.5 rounded-md bg-slate-950/90 border border-slate-800 text-[10px] text-slate-300"
+              >
+                <strong className="text-emerald-300">{count}</strong> {label}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <EmptyDatabaseModal

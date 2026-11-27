@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   Department, 
   Citizen, 
@@ -44,8 +44,31 @@ import {
   INITIAL_ESCUELA_EMPRESA_STUDENTS
 } from '../data/initialData';
 import { useAuth } from './AuthContext';
-import { ParsedMunicipalRow, ParsedWorkbookResult } from '../lib/excelUtils';
+import { ParsedMunicipalRow, ParsedWorkbookResult, parseSectorWorkbook } from '../lib/excelUtils';
+import { inferDepartmentForDriveFile } from '../lib/sectorTemplates';
+import {
+  DriveAuthCredentials,
+  listAllSpreadsheetsInFolderRecursive,
+  getDriveFileMetadata,
+  downloadDriveSpreadsheetBuffer,
+  isGoogleSheet
+} from '../lib/googleDriveService';
 import { syncStateToFirestore, loadStateFromFirestore } from '../lib/firestoreSync';
+
+export const OFFICIAL_MUNICIPAL_DRIVE_FOLDER_ID = '1vEK1_NJyTDky42GIW_T0u6SCBXTaPNJv';
+export const OFFICIAL_MUNICIPAL_DRIVE_URL =
+  'https://drive.google.com/drive/folders/1vEK1_NJyTDky42GIW_T0u6SCBXTaPNJv?usp=sharing';
+
+export interface DriveLiveSyncInfo {
+  timestamp: string;
+  folderId: string;
+  folderName: string;
+  filesFound: number;
+  filesImported: number;
+  totalRecords: number;
+  breakdown: Record<string, number>;
+  failedFiles: string[];
+}
 
 export interface SectorImportSummary {
   added: number;
@@ -267,11 +290,22 @@ interface MunicipalDataContextType {
   updateSportEvent: (event: SportEvent) => void;
   addSportParticipant: (participant: Omit<SportParticipant, 'id'>) => SportParticipant;
 
-  // Import / Sync
+  // Import / Sync (including Live Google Drive Folder Sync)
   importRowsFromSpreadsheet: (rows: ParsedMunicipalRow[], targetDepartmentId: string, sourceName: string, sourceType: 'GOOGLE_DRIVE' | 'EXCEL_LOCAL' | 'GOOGLE_SHEETS') => { added: number; updated: number; duplicates: number };
   importSectorWorkbook: (parsed: ParsedWorkbookResult, targetDepartmentId: string, sourceName: string, sourceType: 'GOOGLE_DRIVE' | 'EXCEL_LOCAL' | 'GOOGLE_SHEETS') => SectorImportSummary;
-  importMultipleSectorWorkbooks: (items: SectorWorkbookBatchItem[]) => BatchSectorImportSummary;
+  importMultipleSectorWorkbooks: (items: SectorWorkbookBatchItem[], options?: { replaceExisting?: boolean }) => BatchSectorImportSummary;
   addSyncLog: (log: Omit<SyncLog, 'id'>) => void;
+  isDriveSyncing: boolean;
+  driveSyncProgress: string | null;
+  driveSyncError: string | null;
+  lastDriveSyncInfo: DriveLiveSyncInfo | null;
+  syncFromOfficialDrive: (options?: { replaceExisting?: boolean; silent?: boolean }) => Promise<{
+    success: boolean;
+    totalRecords?: number;
+    filesCount?: number;
+    error?: string;
+  }>;
+  clearDriveSyncError: () => void;
 
   // Funds & Expenses
   fundAllocations: FundAllocation[];
@@ -375,8 +409,26 @@ const mergeSystemDepartmentsNonDestructive = (savedList: Department[]): Departme
 
 const MunicipalDataContext = createContext<MunicipalDataContextType | undefined>(undefined);
 
+const LAST_DRIVE_SYNC_INFO_KEY = 'ita_ibate_last_drive_sync_info';
+const LINKED_FOLDER_STORAGE_KEY = 'ita_ibate_linked_drive_folder';
+const APPS_SCRIPT_URL_STORAGE_KEY = 'ita_ibate_drive_apps_script_url';
+
 export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, googleToken } = useAuth();
+
+  const [isDriveSyncing, setIsDriveSyncing] = useState(false);
+  const [driveSyncProgress, setDriveSyncProgress] = useState<string | null>(null);
+  const [driveSyncError, setDriveSyncError] = useState<string | null>(null);
+  const [lastDriveSyncInfo, setLastDriveSyncInfo] = useState<DriveLiveSyncInfo | null>(() => {
+    try {
+      const raw = localStorage.getItem(LAST_DRIVE_SYNC_INFO_KEY);
+      return raw ? (JSON.parse(raw) as DriveLiveSyncInfo) : null;
+    } catch {
+      return null;
+    }
+  });
+  const isDriveSyncingRef = useRef(false);
+  const hasAutoSyncedOnMountRef = useRef(false);
 
   const [departmentsLastSavedAt, setDepartmentsLastSavedAt] = useState<string | null>(() => {
     return localStorage.getItem(STORAGE_KEYS.DEPTS_UPDATED_AT);
@@ -1395,7 +1447,24 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     return { added, updated, duplicates };
   };
 
-  const importMultipleSectorWorkbooks = (items: SectorWorkbookBatchItem[]): BatchSectorImportSummary => {
+  const importMultipleSectorWorkbooks = (
+    items: SectorWorkbookBatchItem[],
+    options?: { replaceExisting?: boolean }
+  ): BatchSectorImportSummary => {
+    const replaceMode = options?.replaceExisting === true;
+    const baseCitizens = replaceMode ? [] : citizens;
+    const baseSportsEvents = replaceMode ? [] : sportsEvents;
+    const baseSportsParticipants = replaceMode ? [] : sportsParticipants;
+    const baseCulturalStudents = replaceMode ? [] : culturalStudents;
+    const baseEmployees = replaceMode ? [] : employees;
+    const baseDriversLicenses = replaceMode ? [] : driversLicenses;
+    const baseTrafficFines = replaceMode ? [] : trafficFines;
+    const baseCommercialLicenses = replaceMode ? [] : commercialLicenses;
+    const baseTrafficCheckpoints = replaceMode ? [] : trafficCheckpoints;
+    const baseNecrologicalRecords = replaceMode ? [] : necrologicalRecords;
+    const baseEscuelaEmpresaStudents = replaceMode ? [] : escuelaEmpresaStudents;
+    const baseTickets = replaceMode ? [] : tickets;
+
     let totalAdded = 0;
     let totalUpdated = 0;
     let totalDuplicates = 0;
@@ -1423,15 +1492,15 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     const ticketsToAdd: Ticket[] = [];
     const ticketStatusUpdates: { id: string; sourceName: string }[] = [];
 
-    let runningCultCount = culturalStudents.length;
-    let runningEmpCount = employees.length;
-    let runningLicCount = driversLicenses.length;
-    let runningFineCount = trafficFines.length;
-    let runningCommCount = commercialLicenses.length;
-    let runningChkCount = trafficCheckpoints.length;
-    let runningNecroCount = necrologicalRecords.length;
-    let runningEECount = escuelaEmpresaStudents.length;
-    let runningTicketCount = tickets.length;
+    let runningCultCount = baseCulturalStudents.length;
+    let runningEmpCount = baseEmployees.length;
+    let runningLicCount = baseDriversLicenses.length;
+    let runningFineCount = baseTrafficFines.length;
+    let runningCommCount = baseCommercialLicenses.length;
+    let runningChkCount = baseTrafficCheckpoints.length;
+    let runningNecroCount = baseNecrologicalRecords.length;
+    let runningEECount = baseEscuelaEmpresaStudents.length;
+    let runningTicketCount = baseTickets.length;
 
     items.forEach(({ parsed, targetDepartmentId, sourceName, sourceType }) => {
       let added = 0;
@@ -1451,9 +1520,9 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         const targetClean = cleanNum(dni);
         const existing =
           (targetClean
-            ? [...citizens, ...citizensToAdd].find(c => cleanNum(c.dni) === targetClean)
+            ? [...baseCitizens, ...citizensToAdd].find(c => cleanNum(c.dni) === targetClean)
             : undefined) ||
-          [...citizens, ...citizensToAdd].find(c => c.fullName.toLowerCase() === fullName.toLowerCase() && c.dni === dni);
+          [...baseCitizens, ...citizensToAdd].find(c => c.fullName.toLowerCase() === fullName.toLowerCase() && c.dni === dni);
 
         if (existing) return existing;
 
@@ -1474,7 +1543,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       // 1. SPORTS
       parsed.sportRows.forEach(r => {
-        const existingEvt = [...sportsEvents, ...eventsToAdd].find(
+        const existingEvt = [...baseSportsEvents, ...eventsToAdd].find(
           e => e.name.toLowerCase() === r.eventName.toLowerCase()
         );
         let eventId = existingEvt?.id;
@@ -1503,7 +1572,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         });
 
         const rDniClean = cleanNum(r.dni);
-        const dup = [...sportsParticipants, ...participantsToAdd].find(p => {
+        const dup = [...baseSportsParticipants, ...participantsToAdd].find(p => {
           const sameDni = rDniClean ? cleanNum(p.dni) === rDniClean : p.fullName.toLowerCase() === r.fullName.toLowerCase();
           return (
             sameDni &&
@@ -1557,7 +1626,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
       // 2. CULTURE
       parsed.cultureRows.forEach(r => {
         const rDniClean = cleanNum(r.dni);
-        const dup = [...culturalStudents, ...cultureToAdd].find(s => {
+        const dup = [...baseCulturalStudents, ...cultureToAdd].find(s => {
           const sameDni = rDniClean ? cleanNum(s.dni) === rDniClean : s.fullName.toLowerCase() === r.fullName.toLowerCase();
           return sameDni && s.course === r.course;
         });
@@ -1609,7 +1678,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
       // 3. RRHH
       parsed.employeeRows.forEach(r => {
         const rDniClean = cleanNum(r.dni);
-        const dup = [...employees, ...employeesToAdd].find(e => {
+        const dup = [...baseEmployees, ...employeesToAdd].find(e => {
           if (r.fileNumber && e.fileNumber.toLowerCase() === r.fileNumber.toLowerCase()) return true;
           if (rDniClean && cleanNum(e.dni) === rDniClean) return true;
           return false;
@@ -1662,7 +1731,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
       // 4. CONTROL URBANO - CARNETS
       parsed.licenseRows.forEach(r => {
         const rDniClean = cleanNum(r.citizenDni);
-        const dup = [...driversLicenses, ...licensesToAdd].find(l => {
+        const dup = [...baseDriversLicenses, ...licensesToAdd].find(l => {
           if (r.licenseNumber && l.licenseNumber.toLowerCase() === r.licenseNumber.toLowerCase()) return true;
           return rDniClean && cleanNum(l.citizenDni) === rDniClean && l.issueDate === r.issueDate;
         });
@@ -1683,7 +1752,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       // 5. CONTROL URBANO - MULTAS
       parsed.fineRows.forEach(r => {
-        const dup = [...trafficFines, ...finesToAdd].find(
+        const dup = [...baseTrafficFines, ...finesToAdd].find(
           f => f.actNumber.toLowerCase() === r.actNumber.toLowerCase()
         );
         if (dup) {
@@ -1703,7 +1772,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       // 6. CONTROL URBANO - HABILITACIONES
       parsed.commercialRows.forEach(r => {
-        const dup = [...commercialLicenses, ...commercialToAdd].find(
+        const dup = [...baseCommercialLicenses, ...commercialToAdd].find(
           c =>
             c.expedientNumber.toLowerCase() === r.expedientNumber.toLowerCase() &&
             c.businessName.toLowerCase() === r.businessName.toLowerCase()
@@ -1725,7 +1794,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
 
       // 7. CONTROL URBANO - OPERATIVOS
       parsed.checkpointRows.forEach(r => {
-        const dup = [...trafficCheckpoints, ...checkpointsToAdd].find(
+        const dup = [...baseTrafficCheckpoints, ...checkpointsToAdd].find(
           c =>
             c.date === r.date &&
             c.location.toLowerCase() === r.location.toLowerCase() &&
@@ -1749,7 +1818,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
       // 8. NECROLOGICAL
       parsed.necrologicalRows.forEach(r => {
         const rDniClean = cleanNum(r.deceasedDni);
-        const dup = [...necrologicalRecords, ...necroToAdd].find(n => {
+        const dup = [...baseNecrologicalRecords, ...necroToAdd].find(n => {
           const sameDni = rDniClean ? cleanNum(n.deceasedDni) === rDniClean : n.deceasedFullName.toLowerCase() === r.deceasedFullName.toLowerCase();
           return sameDni && n.deathDate === r.deathDate;
         });
@@ -1780,7 +1849,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         });
 
         const rDniClean = cleanNum(r.dni);
-        const dup = [...escuelaEmpresaStudents, ...escuelaEmpresaToAdd].find(s => {
+        const dup = [...baseEscuelaEmpresaStudents, ...escuelaEmpresaToAdd].find(s => {
           const sameDni = rDniClean ? cleanNum(s.dni) === rDniClean : s.fullName.toLowerCase() === r.fullName.toLowerCase();
           return sameDni && s.specialty === r.specialty;
         });
@@ -1827,7 +1896,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         });
 
         const rDniClean = cleanNum(r.dni);
-        const existingTicket = [...tickets, ...ticketsToAdd].find(t => {
+        const existingTicket = [...baseTickets, ...ticketsToAdd].find(t => {
           const sameDni = rDniClean ? cleanNum(t.citizenDni) === rDniClean : t.citizenName.toLowerCase() === r.fullName.toLowerCase();
           return (
             sameDni &&
@@ -1917,37 +1986,53 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     });
 
     // Apply all batched state updates once cleanly
-    if (citizensToAdd.length > 0) setCitizens(prev => [...citizensToAdd, ...prev]);
-    if (eventsToAdd.length > 0) setSportsEvents(prev => [...eventsToAdd, ...prev]);
-    if (participantsToAdd.length > 0 || participantsTutorUpdates.size > 0) {
-      setSportsParticipants(prev => [
-        ...participantsToAdd,
-        ...prev.map(p => (participantsTutorUpdates.has(p.id) ? { ...p, ...participantsTutorUpdates.get(p.id)! } : p))
-      ]);
+    if (replaceMode) {
+      // Base operational collections 100% on the live Google Drive Excel files (preserving departments/authorities & credentials)
+      setCitizens(citizensToAdd);
+      setSportsEvents(eventsToAdd);
+      setSportsParticipants(participantsToAdd);
+      setCulturalStudents(cultureToAdd);
+      setEmployees(employeesToAdd);
+      setDriversLicenses(licensesToAdd);
+      setTrafficFines(finesToAdd);
+      setCommercialLicenses(commercialToAdd);
+      setTrafficCheckpoints(checkpointsToAdd);
+      setNecrologicalRecords(necroToAdd);
+      setEscuelaEmpresaStudents(escuelaEmpresaToAdd);
+      setTickets(ticketsToAdd);
+    } else {
+      if (citizensToAdd.length > 0) setCitizens(prev => [...citizensToAdd, ...prev]);
+      if (eventsToAdd.length > 0) setSportsEvents(prev => [...eventsToAdd, ...prev]);
+      if (participantsToAdd.length > 0 || participantsTutorUpdates.size > 0) {
+        setSportsParticipants(prev => [
+          ...participantsToAdd,
+          ...prev.map(p => (participantsTutorUpdates.has(p.id) ? { ...p, ...participantsTutorUpdates.get(p.id)! } : p))
+        ]);
+      }
+      if (cultureToAdd.length > 0 || cultureTutorUpdates.size > 0) {
+        setCulturalStudents(prev => [
+          ...cultureToAdd,
+          ...prev.map(s => (cultureTutorUpdates.has(s.id) ? { ...s, ...cultureTutorUpdates.get(s.id)! } : s))
+        ]);
+      }
+      if (employeesToAdd.length > 0) setEmployees(prev => [...employeesToAdd, ...prev]);
+      if (licensesToAdd.length > 0) setDriversLicenses(prev => [...licensesToAdd, ...prev]);
+      if (finesToAdd.length > 0) setTrafficFines(prev => [...finesToAdd, ...prev]);
+      if (commercialToAdd.length > 0) setCommercialLicenses(prev => [...commercialToAdd, ...prev]);
+      if (checkpointsToAdd.length > 0) setTrafficCheckpoints(prev => [...checkpointsToAdd, ...prev]);
+      if (necroToAdd.length > 0) setNecrologicalRecords(prev => [...necroToAdd, ...prev]);
+      if (escuelaEmpresaToAdd.length > 0) setEscuelaEmpresaStudents(prev => [...escuelaEmpresaToAdd, ...prev]);
+      if (ticketsToAdd.length > 0) setTickets(prev => [...ticketsToAdd, ...prev]);
+      ticketStatusUpdates.forEach(item => {
+        updateTicketStatus(item.id, 'SOLUCIONADO', `Actualizado desde sincronización (${item.sourceName})`);
+      });
     }
-    if (cultureToAdd.length > 0 || cultureTutorUpdates.size > 0) {
-      setCulturalStudents(prev => [
-        ...cultureToAdd,
-        ...prev.map(s => (cultureTutorUpdates.has(s.id) ? { ...s, ...cultureTutorUpdates.get(s.id)! } : s))
-      ]);
-    }
-    if (employeesToAdd.length > 0) setEmployees(prev => [...employeesToAdd, ...prev]);
-    if (licensesToAdd.length > 0) setDriversLicenses(prev => [...licensesToAdd, ...prev]);
-    if (finesToAdd.length > 0) setTrafficFines(prev => [...finesToAdd, ...prev]);
-    if (commercialToAdd.length > 0) setCommercialLicenses(prev => [...commercialToAdd, ...prev]);
-    if (checkpointsToAdd.length > 0) setTrafficCheckpoints(prev => [...checkpointsToAdd, ...prev]);
-    if (necroToAdd.length > 0) setNecrologicalRecords(prev => [...necroToAdd, ...prev]);
-    if (escuelaEmpresaToAdd.length > 0) setEscuelaEmpresaStudents(prev => [...escuelaEmpresaToAdd, ...prev]);
-    if (ticketsToAdd.length > 0) setTickets(prev => [...ticketsToAdd, ...prev]);
-    ticketStatusUpdates.forEach(item => {
-      updateTicketStatus(item.id, 'SOLUCIONADO', `Actualizado desde sincronización (${item.sourceName})`);
-    });
-    if (syncLogsToAdd.length > 0) setSyncLogs(prev => [...syncLogsToAdd, ...prev]);
+    if (syncLogsToAdd.length > 0) setSyncLogs(prev => [...syncLogsToAdd, ...prev.slice(0, 100)]);
 
     logAudit(
-      'IMPORTACION_MASIVA',
+      replaceMode ? 'ACTUALIZACION_DESDE_DRIVE' : 'IMPORTACION_MASIVA',
       'PLANILLA_SECTORIAL',
-      `Sincronizados ${items.length} archivo(s) (+${totalAdded} nuevos, ${totalUpdated} actualizados, ${totalDuplicates} duplicados)`
+      `${replaceMode ? 'Base actualizada desde Drive con' : 'Sincronizados'} ${items.length} archivo(s) (+${totalAdded} registros, ${totalUpdated} actualizados, ${totalDuplicates} duplicados)`
     );
 
     return {
@@ -1958,6 +2043,173 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
       perFile
     };
   };
+
+  // Global 1-click Live Sync directly from the official Municipal Google Drive folder
+  const syncFromOfficialDrive = useCallback(
+    async (options?: { replaceExisting?: boolean; silent?: boolean }) => {
+      if (isDriveSyncingRef.current) {
+        return { success: false, error: 'Ya hay una actualización de Google Drive en curso.' };
+      }
+
+      isDriveSyncingRef.current = true;
+      setIsDriveSyncing(true);
+      if (!options?.silent) {
+        setDriveSyncError(null);
+      }
+      setDriveSyncProgress('Conectando con carpeta oficial de Google Drive...');
+
+      try {
+        let folderId = OFFICIAL_MUNICIPAL_DRIVE_FOLDER_ID;
+        let folderName = 'Sistema de Gestión';
+        let storedFolderObj: any = null;
+        try {
+          const rawFolder = localStorage.getItem(LINKED_FOLDER_STORAGE_KEY);
+          if (rawFolder) {
+            storedFolderObj = JSON.parse(rawFolder);
+            if (storedFolderObj?.folderId) {
+              folderId = storedFolderObj.folderId;
+              folderName = storedFolderObj.folderName || folderName;
+            }
+          }
+        } catch {
+          // fallback to official municipal folder ID
+        }
+
+        let auth: DriveAuthCredentials = { publicProxy: true };
+        if (googleToken) {
+          auth = { accessToken: googleToken };
+        } else {
+          try {
+            const scriptUrl = localStorage.getItem(APPS_SCRIPT_URL_STORAGE_KEY)?.trim();
+            if (scriptUrl) auth = { appsScriptUrl: scriptUrl };
+          } catch {
+            // default publicProxy
+          }
+        }
+
+        try {
+          const meta = await getDriveFileMetadata(auth, folderId);
+          if (meta?.name) folderName = meta.name;
+        } catch {
+          // keep fallback folderName
+        }
+
+        setDriveSyncProgress(`Escaneando "${folderName}" y las subcarpetas de cada Secretaría...`);
+        const allFound = await listAllSpreadsheetsInFolderRecursive(auth, folderId, folderName, 2);
+
+        if (allFound.length === 0) {
+          throw new Error(
+            `La carpeta "${folderName}" en Google Drive no contiene archivos Excel (.xlsx, .xls, .csv) o no está compartida como lector.`
+          );
+        }
+
+        const batchItems: SectorWorkbookBatchItem[] = [];
+        const failedFiles: string[] = [];
+        const syncedFilesMap: Record<string, string> = {};
+
+        for (let i = 0; i < allFound.length; i++) {
+          const entry = allFound[i];
+          setDriveSyncProgress(`Leyendo planilla ${i + 1} de ${allFound.length}: ${entry.file.name}`);
+          try {
+            const buffer = await downloadDriveSpreadsheetBuffer(auth, entry.file);
+            const parsed = parseSectorWorkbook(buffer, entry.file.name);
+            if (parsed.totalDetected === 0) {
+              failedFiles.push(`${entry.file.name} (sin filas válidas)`);
+              continue;
+            }
+            const inferredDeptId = inferDepartmentForDriveFile(
+              entry.file.name,
+              entry.folderPath,
+              parsed.inferredDepartmentId,
+              departments,
+              departments[0]?.id || 'coord-atencion-ciudadana'
+            );
+            batchItems.push({
+              parsed,
+              targetDepartmentId: inferredDeptId,
+              sourceName: entry.file.name,
+              sourceType: isGoogleSheet(entry.file.mimeType) ? 'GOOGLE_SHEETS' : 'GOOGLE_DRIVE'
+            });
+            syncedFilesMap[entry.file.id] = entry.file.modifiedTime || 'static';
+          } catch (fileErr: any) {
+            failedFiles.push(`${entry.file.name} (${fileErr?.message ? fileErr.message.slice(0, 60) : 'error'})`);
+          }
+        }
+
+        if (batchItems.length === 0) {
+          throw new Error(
+            'Se encontraron archivos en Google Drive pero ninguno pudo importarse con las columnas del modelo oficial.'
+          );
+        }
+
+        setDriveSyncProgress(`Actualizando el sistema con ${batchItems.length} planillas reales...`);
+        const summary = importMultipleSectorWorkbooks(batchItems, {
+          replaceExisting: options?.replaceExisting ?? true
+        });
+
+        const nowIso = new Date().toISOString();
+        const syncInfo: DriveLiveSyncInfo = {
+          timestamp: nowIso,
+          folderId,
+          folderName,
+          filesFound: allFound.length,
+          filesImported: batchItems.length,
+          totalRecords: summary.added,
+          breakdown: summary.breakdown,
+          failedFiles
+        };
+
+        setLastDriveSyncInfo(syncInfo);
+        setDriveSyncError(null);
+
+        try {
+          localStorage.setItem(LAST_DRIVE_SYNC_INFO_KEY, JSON.stringify(syncInfo));
+          const updatedLinked = {
+            ...(storedFolderObj || {}),
+            folderId,
+            folderName,
+            folderUrl: storedFolderObj?.folderUrl || OFFICIAL_MUNICIPAL_DRIVE_URL,
+            autoSyncOnConnect: true,
+            lastSyncedAt: nowIso,
+            syncedFilesMap
+          };
+          localStorage.setItem(LINKED_FOLDER_STORAGE_KEY, JSON.stringify(updatedLinked));
+          syncStateToFirestore({ lastDriveSyncInfo: syncInfo, linkedDriveFolder: updatedLinked }).catch(() => {});
+        } catch {
+          // ignore storage quota
+        }
+
+        return {
+          success: true,
+          totalRecords: summary.added,
+          filesCount: batchItems.length
+        };
+      } catch (err: any) {
+        const msg = err?.message || 'No se pudo actualizar desde Google Drive.';
+        if (!options?.silent) {
+          setDriveSyncError(msg);
+        }
+        return { success: false, error: msg };
+      } finally {
+        isDriveSyncingRef.current = false;
+        setIsDriveSyncing(false);
+        setDriveSyncProgress(null);
+      }
+    },
+    [googleToken, departments, importMultipleSectorWorkbooks]
+  );
+
+  const clearDriveSyncError = useCallback(() => setDriveSyncError(null), []);
+
+  // Automatic background refresh from official Google Drive folder once when Admin opens the system
+  useEffect(() => {
+    if (hasAutoSyncedOnMountRef.current) return;
+    hasAutoSyncedOnMountRef.current = true;
+    const timer = window.setTimeout(() => {
+      syncFromOfficialDrive({ replaceExisting: true, silent: true }).catch(() => {});
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [syncFromOfficialDrive]);
 
   const importSectorWorkbook = (
     parsed: ParsedWorkbookResult,
@@ -2603,6 +2855,12 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
         importSectorWorkbook,
         importMultipleSectorWorkbooks,
         addSyncLog,
+        isDriveSyncing,
+        driveSyncProgress,
+        driveSyncError,
+        lastDriveSyncInfo,
+        syncFromOfficialDrive,
+        clearDriveSyncError,
         addFundAllocation,
         updateFundAllocation,
         cancelFundAllocation,

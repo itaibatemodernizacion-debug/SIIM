@@ -11,7 +11,9 @@ import {
   FileSpreadsheet,
   ChevronDown,
   KeyRound,
-  X
+  X,
+  RefreshCw,
+  FolderOpen
 } from 'lucide-react';
 
 export const Header: React.FC<{
@@ -34,7 +36,17 @@ export const Header: React.FC<{
     changeSystemPassword
   } = useAuth();
 
-  const { kpis, departmentKPIs, financialKPIs } = useMunicipalData();
+  const {
+    kpis,
+    departmentKPIs,
+    financialKPIs,
+    isDriveSyncing,
+    driveSyncProgress,
+    driveSyncError,
+    lastDriveSyncInfo,
+    syncFromOfficialDrive,
+    clearDriveSyncError
+  } = useMunicipalData();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [dismissedDefaultPassBanner, setDismissedDefaultPassBanner] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -71,6 +83,47 @@ export const Header: React.FC<{
 
   return (
     <header className="bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-40 shadow-md">
+      {/* Live Google Drive sync progress or error strip */}
+      {isDriveSyncing && (
+        <div className="bg-emerald-950/95 border-b border-emerald-500/40 px-4 py-1.5 text-xs text-emerald-100 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" />
+            <span className="truncate font-medium">
+              {driveSyncProgress || 'Actualizando datos desde las planillas de Google Drive...'}
+            </span>
+          </div>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 shrink-0">
+            Sincronizando Drive
+          </span>
+        </div>
+      )}
+
+      {!isDriveSyncing && driveSyncError && (
+        <div className="bg-rose-950/95 border-b border-rose-500/40 px-4 py-1.5 text-xs text-rose-100 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+            <span className="truncate">Error al actualizar desde Google Drive: {driveSyncError}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => syncFromOfficialDrive({ replaceExisting: true })}
+              className="px-2 py-0.5 bg-rose-700 hover:bg-rose-600 text-white rounded text-[11px] font-semibold cursor-pointer"
+            >
+              Reintentar
+            </button>
+            <button
+              type="button"
+              onClick={clearDriveSyncError}
+              className="text-rose-300 hover:text-white cursor-pointer"
+              title="Cerrar aviso"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Prompt to change initial default password whenever the Admin wishes */}
       {isUsingDefaultPassword && !dismissedDefaultPassBanner && (
         <div className="bg-sky-950/90 border-b border-sky-500/40 px-4 py-1.5 text-xs text-sky-100 flex flex-wrap items-center justify-between gap-2">
@@ -170,28 +223,56 @@ export const Header: React.FC<{
           </div>
         </div>
 
-        {/* Center: Live Date & Drive sync badge */}
-        <div className="hidden xl:flex items-center gap-4 text-xs text-slate-300">
-          <div className="flex items-center gap-1.5 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/60">
+        {/* Center: Live Date & Always-Accessible 1-Click Drive Refresh */}
+        <div className="flex items-center gap-2 lg:gap-3 text-xs text-slate-300">
+          <div className="hidden 2xl:flex items-center gap-1.5 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/60">
             <Clock className="w-3.5 h-3.5 text-sky-400" />
             <span className="capitalize">{formattedDate}</span>
           </div>
 
-          <button
-            onClick={onNavigateToDrive}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
-              googleToken
-                ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/40'
-                : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700/60'
-            }`}
-            title="Conexión de sincronización de datos con Google Drive y Planillas Excel"
-          >
-            <FileSpreadsheet className={`w-3.5 h-3.5 ${googleToken ? 'text-emerald-400' : 'text-slate-400'}`} />
-            <span>Drive & Sheets:</span>
-            <span className={`font-semibold ${googleToken ? 'text-emerald-300' : 'text-sky-300'}`}>
-              {googleToken ? 'Conectado' : 'Listo p/ Sincronizar'}
-            </span>
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => syncFromOfficialDrive({ replaceExisting: true })}
+              disabled={isDriveSyncing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-sm transition-all cursor-pointer disabled:opacity-60"
+              title={
+                lastDriveSyncInfo
+                  ? `Última actualización desde Drive (${lastDriveSyncInfo.folderName}): ${lastDriveSyncInfo.filesImported} planillas · ${lastDriveSyncInfo.totalRecords} registros`
+                  : 'Descargar y actualizar todos los datos del sistema desde las planillas Excel en Google Drive'
+              }
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isDriveSyncing ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">
+                {isDriveSyncing ? 'Actualizando...' : 'Actualizar desde Drive'}
+              </span>
+              <span className="sm:hidden">{isDriveSyncing ? '...' : 'Drive'}</span>
+              {!isDriveSyncing && lastDriveSyncInfo && (
+                <span className="hidden md:inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-200 text-[10px] font-semibold">
+                  {lastDriveSyncInfo.totalRecords} reg.
+                </span>
+              )}
+            </button>
+
+            {onNavigateToDrive && (
+              <button
+                type="button"
+                onClick={onNavigateToDrive}
+                className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                  googleToken || lastDriveSyncInfo
+                    ? 'bg-slate-800/90 border-emerald-500/35 text-emerald-300 hover:bg-slate-700'
+                    : 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:bg-slate-700'
+                }`}
+                title="Abrir carpeta de Google Drive y explorar las planillas por área"
+              >
+                {lastDriveSyncInfo ? (
+                  <FolderOpen className="w-3.5 h-3.5" />
+                ) : (
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Right: Privacy Toggle & Single Admin Account Menu */}

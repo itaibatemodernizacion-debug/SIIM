@@ -11,7 +11,8 @@ export interface DriveFileItem {
 export type DriveAuthCredentials =
   | string
   | { accessToken: string }
-  | { publicProxy: true };
+  | { publicProxy: true }
+  | { appsScriptUrl: string };
 
 export const DRIVE_MIME_TYPES = {
   FOLDER: 'application/vnd.google-apps.folder',
@@ -27,10 +28,23 @@ export const isGoogleSheet = (mimeType: string) => mimeType === DRIVE_MIME_TYPES
 const isPublicProxyAuth = (auth: DriveAuthCredentials): auth is { publicProxy: true } =>
   typeof auth === 'object' && auth !== null && 'publicProxy' in auth && auth.publicProxy === true;
 
+const isAppsScriptAuth = (auth: DriveAuthCredentials): auth is { appsScriptUrl: string } =>
+  typeof auth === 'object' && auth !== null && 'appsScriptUrl' in auth && typeof auth.appsScriptUrl === 'string' && auth.appsScriptUrl.trim().length > 0;
+
 const getOAuthToken = (auth: DriveAuthCredentials): string => {
   if (typeof auth === 'string') return auth;
   if ('accessToken' in auth) return auth.accessToken;
   return '';
+};
+
+const base64ToArrayBuffer = (base64: string): ArrayBuffer => {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
 };
 
 /**
@@ -65,7 +79,7 @@ const handleOAuthDriveError = async (res: Response): Promise<never> => {
 
   if (res.status === 401 || res.status === 403) {
     throw new Error(
-      'AUTH_EXPIRED: Su sesión o permiso de Google Drive expiró. Haga clic en "Sign in with Google" o utilice la sincronización directa de la carpeta compartida.'
+      'AUTH_EXPIRED: Su sesión o permiso de Google Drive expiró. Utilice el botón verde "Sincronizar Toda la Carpeta Ahora" (sin iniciar sesión) o vuelva a autorizar Google.'
     );
   }
 
@@ -75,12 +89,25 @@ const handleOAuthDriveError = async (res: Response): Promise<never> => {
 const handlePublicProxyError = async (res: Response): Promise<never> => {
   let msg = `No se pudo leer la carpeta compartida de Google Drive (${res.status}).`;
   try {
-    const errJson = await res.json();
-    if (errJson?.error) msg = errJson.error;
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const errJson = await res.json();
+      if (errJson?.error) msg = errJson.error;
+    }
   } catch {
     // ignore
   }
   throw new Error(msg);
+};
+
+const ensureJsonResponse = async (res: Response, endpointLabel: string) => {
+  const ct = res.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    throw new Error(
+      `El servidor (${endpointLabel}) no respondió con datos JSON. Si publicó la app en un hosting estático sin funciones de servidor, utilice el conector de Google Apps Script o la Carga Múltiple de Excel.`
+    );
+  }
+  return res.json();
 };
 
 export interface DriveFileWithFolder {
@@ -91,12 +118,31 @@ export interface DriveFileWithFolder {
 
 /**
  * Lists folders and spreadsheet/Excel files in Google Drive.
- * Supports both direct shared-folder proxy (zero login) and authenticated OAuth tokens.
+ * Supports: (1) Built-in shared-folder proxy (zero login), (2) Google Apps Script Web App URL, (3) OAuth token.
  */
 export const listDriveSpreadsheetsAndFolders = async (
   auth: DriveAuthCredentials,
   options?: { folderId?: string; searchText?: string }
 ): Promise<DriveFileItem[]> => {
+  if (isAppsScriptAuth(auth)) {
+    const folderId = options?.folderId;
+    if (!folderId || folderId === 'ROOT') return [];
+    const sep = auth.appsScriptUrl.includes('?') ? '&' : '?';
+    const url = `${auth.appsScriptUrl.trim()}${sep}action=list&folderId=${encodeURIComponent(folderId)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`Error al consultar Google Apps Script (${res.status}). Verifique que el script esté publicado como "Cualquier persona".`);
+    }
+    const data = await ensureJsonResponse(res, 'Google Apps Script');
+    if (data.error) throw new Error(data.error);
+    let files = (data.files || []) as DriveFileItem[];
+    if (options?.searchText && options.searchText.trim()) {
+      const needle = options.searchText.trim().toLowerCase();
+      files = files.filter(f => f.name.toLowerCase().includes(needle));
+    }
+    return files;
+  }
+
   if (isPublicProxyAuth(auth)) {
     const folderId = options?.folderId;
     if (!folderId || folderId === 'ROOT') {
@@ -108,7 +154,7 @@ export const listDriveSpreadsheetsAndFolders = async (
       await handlePublicProxyError(res);
     }
 
-    const data = await res.json();
+    const data = await ensureJsonResponse(res, '/api/drive/public/folder');
     let files = (data.files || []) as DriveFileItem[];
 
     if (options?.searchText && options.searchText.trim()) {
@@ -211,12 +257,28 @@ export const getDriveFileMetadata = async (
   auth: DriveAuthCredentials,
   fileId: string
 ): Promise<DriveFileItem> => {
+  if (isAppsScriptAuth(auth)) {
+    const sep = auth.appsScriptUrl.includes('?') ? '&' : '?';
+    const res = await fetch(`${auth.appsScriptUrl.trim()}${sep}action=list&folderId=${encodeURIComponent(fileId)}`);
+    if (!res.ok) {
+      throw new Error(`No se pudo consultar la carpeta vía Apps Script (${res.status}).`);
+    }
+    const data = await ensureJsonResponse(res, 'Google Apps Script');
+    if (data.error) throw new Error(data.error);
+    return {
+      id: fileId,
+      name: data.folderName || 'Carpeta Oficial Municipal',
+      mimeType: DRIVE_MIME_TYPES.FOLDER,
+      webViewLink: `https://drive.google.com/drive/folders/${fileId}`
+    };
+  }
+
   if (isPublicProxyAuth(auth)) {
     const res = await fetch(`/api/drive/public/folder/${encodeURIComponent(fileId)}`);
     if (!res.ok) {
       await handlePublicProxyError(res);
     }
-    const data = await res.json();
+    const data = await ensureJsonResponse(res, '/api/drive/public/folder');
     return {
       id: fileId,
       name: data.folderName || 'Carpeta Oficial Municipal',
@@ -249,6 +311,20 @@ export const downloadDriveSpreadsheetBuffer = async (
   auth: DriveAuthCredentials,
   file: Pick<DriveFileItem, 'id' | 'name' | 'mimeType'>
 ): Promise<ArrayBuffer> => {
+  if (isAppsScriptAuth(auth)) {
+    const sep = auth.appsScriptUrl.includes('?') ? '&' : '?';
+    const url = `${auth.appsScriptUrl.trim()}${sep}action=download&fileId=${encodeURIComponent(file.id)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`Error al descargar "${file.name}" vía Apps Script (${res.status}).`);
+    }
+    const data = await ensureJsonResponse(res, 'Google Apps Script');
+    if (data.error || !data.base64) {
+      throw new Error(data.error || `No se recibió el contenido de "${file.name}".`);
+    }
+    return base64ToArrayBuffer(data.base64);
+  }
+
   if (isPublicProxyAuth(auth)) {
     const params = new URLSearchParams({ mimeType: file.mimeType || '' });
     const res = await fetch(
@@ -256,6 +332,12 @@ export const downloadDriveSpreadsheetBuffer = async (
     );
     if (!res.ok) {
       await handlePublicProxyError(res);
+    }
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('text/html')) {
+      throw new Error(
+        `No se pudo descargar "${file.name}" directamente. Verifique que el archivo tenga permiso "Cualquier persona con el enlace: Lector".`
+      );
     }
     return await res.arrayBuffer();
   }

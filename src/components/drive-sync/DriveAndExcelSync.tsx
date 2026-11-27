@@ -36,7 +36,11 @@ import {
   FolderSync,
   CheckCheck,
   Info,
-  ChefHat
+  ChefHat,
+  Copy,
+  Code2,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import {
   parseSectorWorkbook,
@@ -93,6 +97,7 @@ interface FolderSyncReport {
 
 const LINKED_FOLDER_STORAGE_KEY = 'ita_ibate_linked_drive_folder';
 const LINKED_FOLDER_UNLINKED_KEY = 'ita_ibate_drive_folder_unlinked';
+const APPS_SCRIPT_URL_STORAGE_KEY = 'ita_ibate_drive_apps_script_url';
 
 const DEFAULT_OFFICIAL_DRIVE_FOLDER: LinkedDriveFolderConfig = {
   folderId: '1vEK1_NJyTDky42GIW_T0u6SCBXTaPNJv',
@@ -102,6 +107,77 @@ const DEFAULT_OFFICIAL_DRIVE_FOLDER: LinkedDriveFolderConfig = {
   autoSyncOnConnect: true,
   syncedFilesMap: {}
 };
+
+const GOOGLE_APPS_SCRIPT_TEMPLATE = `function doGet(e) {
+  var action = (e.parameter.action || 'list').toString();
+  try {
+    if (action === 'list') {
+      var folderId = e.parameter.folderId || '1vEK1_NJyTDky42GIW_T0u6SCBXTaPNJv';
+      var folder = DriveApp.getFolderById(folderId);
+      var out = [];
+      var subs = folder.getFolders();
+      while (subs.hasNext()) {
+        var sf = subs.next();
+        out.push({
+          id: sf.getId(),
+          name: sf.getName(),
+          mimeType: 'application/vnd.google-apps.folder',
+          modifiedTime: sf.getLastUpdated().toISOString(),
+          webViewLink: sf.getUrl()
+        });
+      }
+      var files = folder.getFiles();
+      while (files.hasNext()) {
+        var f = files.next();
+        var mt = f.getMimeType();
+        var nm = f.getName().toLowerCase();
+        if (
+          mt === 'application/vnd.google-apps.spreadsheet' ||
+          nm.endsWith('.xlsx') || nm.endsWith('.xls') || nm.endsWith('.csv')
+        ) {
+          out.push({
+            id: f.getId(),
+            name: f.getName(),
+            mimeType: mt,
+            modifiedTime: f.getLastUpdated().toISOString(),
+            webViewLink: f.getUrl()
+          });
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({
+        folderId: folderId,
+        folderName: folder.getName(),
+        files: out
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'download') {
+      var fileId = e.parameter.fileId;
+      var file = DriveApp.getFileById(fileId);
+      var blob;
+      if (file.getMimeType() === 'application/vnd.google-apps.spreadsheet') {
+        var url = 'https://docs.google.com/spreadsheets/d/' + fileId + '/export?format=xlsx';
+        var resp = UrlFetchApp.fetch(url, {
+          headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }
+        });
+        blob = resp.getBlob();
+      } else {
+        blob = file.getBlob();
+      }
+      var b64 = Utilities.base64Encode(blob.getBytes());
+      return ContentService.createTextOutput(JSON.stringify({
+        id: fileId,
+        name: file.getName(),
+        base64: b64
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    return ContentService.createTextOutput(JSON.stringify({ error: 'Acción inválida' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ error: err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
 
 const TARGET_LABELS: Record<SectorImportTarget, string> = {
   SPORTS: 'Deportes y Recreación',
@@ -148,10 +224,20 @@ const loadStoredLinkedFolder = (): LinkedDriveFolderConfig | null => {
 };
 
 export const DriveAndExcelSync: React.FC = () => {
-  const { departments, syncLogs, importSectorWorkbook, importMultipleSectorWorkbooks } = useMunicipalData();
+  const {
+    departments,
+    syncLogs,
+    importSectorWorkbook,
+    importMultipleSectorWorkbooks,
+    isDriveSyncing,
+    driveSyncProgress,
+    lastDriveSyncInfo,
+    syncFromOfficialDrive
+  } = useMunicipalData();
   const { googleToken, googleEmail, connectGoogleDrive, disconnectGoogleDrive, clearGoogleToken } = useAuth();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedDeptId, setSelectedDeptId] = useState(
     departments.find(d => d.id === 'punto-digital')?.id ||
@@ -174,6 +260,24 @@ export const DriveAndExcelSync: React.FC = () => {
   const [syncProgressText, setSyncProgressText] = useState<string | null>(null);
   const [folderSyncReport, setFolderSyncReport] = useState<FolderSyncReport | null>(null);
   const [showEmptyDbModal, setShowEmptyDbModal] = useState(false);
+
+  // Optional Google Apps Script connector & Advanced options panel
+  const [appsScriptUrl, setAppsScriptUrl] = useState<string>(() => {
+    try {
+      return localStorage.getItem(APPS_SCRIPT_URL_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
+  const [appsScriptInput, setAppsScriptInput] = useState<string>(() => {
+    try {
+      return localStorage.getItem(APPS_SCRIPT_URL_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
+  const [showAdvancedConnection, setShowAdvancedConnection] = useState(false);
+  const [copiedScript, setCopiedScript] = useState(false);
 
   // Google Drive Explorer State
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
@@ -202,10 +306,47 @@ export const DriveAndExcelSync: React.FC = () => {
     (tokenOverride?: string): DriveAuthCredentials => {
       const token = tokenOverride || googleToken;
       if (token) return { accessToken: token };
+      if (appsScriptUrl.trim()) return { appsScriptUrl: appsScriptUrl.trim() };
       return { publicProxy: true };
     },
-    [googleToken]
+    [googleToken, appsScriptUrl]
   );
+
+  const handleSaveAppsScriptUrl = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleaned = appsScriptInput.trim();
+    if (cleaned && !cleaned.startsWith('https://script.google.com/')) {
+      setStatusError('El enlace de Google Apps Script debe comenzar con https://script.google.com/macros/s/...');
+      return;
+    }
+    setAppsScriptUrl(cleaned);
+    try {
+      if (cleaned) {
+        localStorage.setItem(APPS_SCRIPT_URL_STORAGE_KEY, cleaned);
+      } else {
+        localStorage.removeItem(APPS_SCRIPT_URL_STORAGE_KEY);
+      }
+    } catch {
+      // ignore
+    }
+    syncStateToFirestore({ driveAppsScriptUrl: cleaned }).catch(() => {});
+    setStatusError(null);
+    setStatusNotice(
+      cleaned
+        ? 'Conector Google Apps Script guardado. Ahora puede sincronizar incluso carpetas privadas o desde hosting estático.'
+        : 'Conector Apps Script quitado. Se usa la conexión directa estándar por enlace compartido.'
+    );
+  };
+
+  const handleCopyAppsScript = async () => {
+    try {
+      await navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
+      setCopiedScript(true);
+      setTimeout(() => setCopiedScript(false), 2500);
+    } catch {
+      setStatusNotice('No se pudo copiar automáticamente; seleccione y copie el código del recuadro.');
+    }
+  };
 
   const persistLinkedFolder = useCallback((cfg: LinkedDriveFolderConfig | null) => {
     setLinkedFolder(cfg);
@@ -403,31 +544,37 @@ export const DriveAndExcelSync: React.FC = () => {
             `Leyendo archivo ${i + 1} de ${filesToProcess.length}: ${entry.file.name}...`
           );
 
-          const buffer = await downloadDriveSpreadsheetBuffer(auth, entry.file);
-          const parsed = parseSectorWorkbook(buffer, entry.file.name);
+          try {
+            const buffer = await downloadDriveSpreadsheetBuffer(auth, entry.file);
+            const parsed = parseSectorWorkbook(buffer, entry.file.name);
 
-          if (parsed.totalDetected === 0) {
-            emptyOrUnrecognized.push(`${entry.file.name} (${entry.folderPath})`);
+            if (parsed.totalDetected === 0) {
+              emptyOrUnrecognized.push(`${entry.file.name} (${entry.folderPath})`);
+              nextSyncedMap[entry.file.id] = entry.file.modifiedTime || 'static';
+              continue;
+            }
+
+            const inferredDeptId = inferDepartmentForDriveFile(
+              entry.file.name,
+              entry.folderPath,
+              parsed.inferredDepartmentId,
+              departments,
+              selectedDeptId
+            );
+
+            batchItems.push({
+              parsed,
+              targetDepartmentId: inferredDeptId,
+              sourceName: entry.file.name,
+              sourceType: isGoogleSheet(entry.file.mimeType) ? 'GOOGLE_SHEETS' : 'GOOGLE_DRIVE'
+            });
+            fileFolderPaths[entry.file.name] = entry.folderPath;
             nextSyncedMap[entry.file.id] = entry.file.modifiedTime || 'static';
-            continue;
+          } catch (fileErr: any) {
+            emptyOrUnrecognized.push(
+              `${entry.file.name} (${fileErr?.message ? fileErr.message.slice(0, 70) : 'No se pudo leer'})`
+            );
           }
-
-          const inferredDeptId = inferDepartmentForDriveFile(
-            entry.file.name,
-            entry.folderPath,
-            parsed.inferredDepartmentId,
-            departments,
-            selectedDeptId
-          );
-
-          batchItems.push({
-            parsed,
-            targetDepartmentId: inferredDeptId,
-            sourceName: entry.file.name,
-            sourceType: isGoogleSheet(entry.file.mimeType) ? 'GOOGLE_SHEETS' : 'GOOGLE_DRIVE'
-          });
-          fileFolderPaths[entry.file.name] = entry.folderPath;
-          nextSyncedMap[entry.file.id] = entry.file.modifiedTime || 'static';
         }
 
         const nowIso = new Date().toISOString();
@@ -705,43 +852,110 @@ export const DriveAndExcelSync: React.FC = () => {
     }
   };
 
-  // Local Excel upload
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Local Excel upload (supports single file preview OR multi-file / entire folder batch import)
+  const processLocalFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+
+    const validFiles = Array.from(fileList).filter(f =>
+      /\.(xlsx|xls|xlsm|csv)$/i.test(f.name) && !f.name.startsWith('~$')
+    );
+
+    if (validFiles.length === 0) {
+      setStatusError('No se encontraron archivos Excel (.xlsx, .xls, .csv) válidos en la selección.');
+      return;
+    }
 
     setIsProcessing(true);
     setStatusError(null);
     setStatusNotice(null);
     setImportSummary(null);
+    setFolderSyncReport(null);
 
     try {
-      const parsed = await parseUploadedSectorFile(file, selectedDeptId);
-      if (parsed.totalDetected === 0) {
-        setStatusError(
-          `No se detectaron registros importables en "${file.name}". Verifique que utilizó el modelo Excel del área correspondiente.`
-        );
+      if (validFiles.length === 1) {
+        const file = validFiles[0];
+        const parsed = await parseUploadedSectorFile(file, selectedDeptId);
+        if (parsed.totalDetected === 0) {
+          setStatusError(
+            `No se detectaron registros importables en "${file.name}". Verifique que utilizó el modelo Excel del área correspondiente.`
+          );
+        } else {
+          const autoDept = inferDepartmentForDriveFile(
+            file.name,
+            (file as any).webkitRelativePath || '',
+            parsed.inferredDepartmentId,
+            departments,
+            selectedDeptId
+          );
+          if (autoDept) setSelectedDeptId(autoDept);
+          setParsedPreview({
+            fileName: file.name,
+            sourceType: 'EXCEL_LOCAL',
+            data: parsed
+          });
+        }
       } else {
-        const autoDept = inferDepartmentForDriveFile(
-          file.name,
-          '',
-          parsed.inferredDepartmentId,
-          departments,
-          selectedDeptId
-        );
-        if (autoDept) setSelectedDeptId(autoDept);
-        setParsedPreview({
-          fileName: file.name,
-          sourceType: 'EXCEL_LOCAL',
-          data: parsed
-        });
+        const batchItems: SectorWorkbookBatchItem[] = [];
+        const emptyOrUnrecognized: string[] = [];
+        const fileFolderPaths: Record<string, string> = {};
+
+        for (const file of validFiles) {
+          const relPath = ((file as any).webkitRelativePath as string) || 'Archivos Locales';
+          try {
+            const parsed = await parseUploadedSectorFile(file, selectedDeptId);
+            if (parsed.totalDetected === 0) {
+              emptyOrUnrecognized.push(file.name);
+              continue;
+            }
+            const inferredDeptId = inferDepartmentForDriveFile(
+              file.name,
+              relPath,
+              parsed.inferredDepartmentId,
+              departments,
+              selectedDeptId
+            );
+            batchItems.push({
+              parsed,
+              targetDepartmentId: inferredDeptId,
+              sourceName: file.name,
+              sourceType: 'EXCEL_LOCAL'
+            });
+            fileFolderPaths[file.name] = relPath.includes('/')
+              ? relPath.split('/').slice(0, -1).join(' / ')
+              : 'Selección Múltiple Local';
+          } catch {
+            emptyOrUnrecognized.push(file.name);
+          }
+        }
+
+        if (batchItems.length === 0) {
+          setStatusError(
+            `Se analizaron ${validFiles.length} archivo(s) Excel, pero ninguno contenía filas válidas con el formato del modelo oficial.`
+          );
+        } else {
+          const summary = importMultipleSectorWorkbooks(batchItems);
+          setFolderSyncReport({
+            timestamp: new Date().toISOString(),
+            folderName: `Importación Masiva Local (${validFiles.length} planillas)`,
+            totalFound: validFiles.length,
+            skippedUnchanged: 0,
+            emptyOrUnrecognized,
+            summary,
+            fileFolderPaths
+          });
+        }
       }
     } catch (err: any) {
-      setStatusError(`Error al procesar el archivo: ${err.message}`);
+      setStatusError(`Error al procesar los archivos: ${err.message}`);
     } finally {
       setIsProcessing(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+      if (folderInputRef.current) folderInputRef.current.value = '';
     }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    await processLocalFiles(e.target.files);
   };
 
   const handleConfirmImport = () => {
@@ -894,8 +1108,12 @@ export const DriveAndExcelSync: React.FC = () => {
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
                 {googleToken
-                  ? `Sesión activa: ${googleEmail || 'Cuenta Google Autorizada'}`
-                  : 'Conecte la cuenta de Google Drive municipal (ej. itaibatemodernizacion@gmail.com) para leer automáticamente todos los Excel de la carpeta elegida.'}
+                  ? `Sesión Google activa: ${googleEmail || 'Cuenta Google Autorizada'}`
+                  : appsScriptUrl
+                    ? 'Conectado vía Google Apps Script Municipal (acceso directo sin verificación de Google).'
+                    : publicFolderAvailable
+                      ? `Conexión directa activa sin iniciar sesión en Google · ${driveFiles.length} elementos detectados en "${linkedFolder?.folderName || 'Sistema de Gestión'}".`
+                      : 'Conexión directa por enlace compartido (no necesita iniciar sesión en Google). Presione el botón verde para importar todas sus planillas Excel.'}
               </p>
             </div>
           </div>
@@ -912,7 +1130,7 @@ export const DriveAndExcelSync: React.FC = () => {
           )}
         </div>
 
-        {/* Case A: Linked Official Folder Active (works via Direct Shared Link OR Google Sign-In) */}
+        {/* Case A: Linked Official Folder Active (works via Direct Shared Link — NO Google login required!) */}
         {linkedFolder && !isEditingLinkedFolder ? (
           <div className="bg-slate-950/80 border border-emerald-500/25 rounded-xl p-4 space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -929,67 +1147,94 @@ export const DriveAndExcelSync: React.FC = () => {
                     <span>Abrir en Drive</span>
                     <ExternalLink className="w-3 h-3" />
                   </a>
-                  {!googleToken && publicFolderAvailable && (
-                    <span className="px-2 py-0.5 text-[10px] font-bold bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded-full">
-                      Acceso Directo Activo
-                    </span>
-                  )}
+                  <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 rounded-full">
+                    {googleToken
+                      ? 'Sesión Google Activa'
+                      : appsScriptUrl
+                        ? 'Apps Script Activo'
+                        : 'Conectado Sin Iniciar Sesión'}
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
                   <span>
-                    Última sincronización: <strong className="text-slate-200">{formatDateTime(linkedFolder.lastSyncedAt)}</strong>
+                    Última sincronización:{' '}
+                    <strong className="text-slate-200">
+                      {formatDateTime(lastDriveSyncInfo?.timestamp || linkedFolder.lastSyncedAt)}
+                    </strong>
                   </span>
                   <span>
-                    Planillas monitoreadas: <strong className="text-slate-200">{trackedFilesCount}</strong>
+                    Planillas leídas:{' '}
+                    <strong className="text-slate-200">
+                      {lastDriveSyncInfo?.filesImported || trackedFilesCount}
+                    </strong>
                   </span>
+                  {lastDriveSyncInfo && (
+                    <span>
+                      Registros en sistema:{' '}
+                      <strong className="text-emerald-300">{lastDriveSyncInfo.totalRecords}</strong>
+                    </span>
+                  )}
                   <span>
-                    Escaneo: <strong className="text-emerald-300">Carpeta + Subcarpetas por Área</strong>
+                    Escaneo: <strong className="text-emerald-300">Carpeta + Todas las Subcarpetas por Área</strong>
                   </span>
                 </div>
-                {!googleToken && (
-                  <p className="text-[11px] text-slate-400">
-                    Carpeta oficial preconfigurada. Puede sincronizar directamente con el enlace compartido o iniciar sesión con Google para acceso completo a su Drive.
-                  </p>
-                )}
+                <p className="text-[11px] text-emerald-300/90">
+                  {isDriveSyncing && driveSyncProgress
+                    ? driveSyncProgress
+                    : 'El sistema se mantiene actualizado directamente con los archivos Excel de esta carpeta. Al presionar "Actualizar Sistema desde Drive", todos los módulos reflejan al instante los Excel cargados por cada Secretaría y Dirección.'}
+                </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={() => handleSyncLinkedFolder(false)}
-                  disabled={isSyncingFolder}
-                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-950/50 transition cursor-pointer disabled:opacity-60 flex items-center gap-2"
+                  onClick={async () => {
+                    setStatusError(null);
+                    setStatusNotice(null);
+                    const res = await syncFromOfficialDrive({ replaceExisting: true });
+                    if (res.success) {
+                      setStatusNotice(
+                        `Sistema actualizado 100% desde Google Drive: ${res.filesCount || 0} planillas leídas y ${res.totalRecords || 0} registros cargados en sus áreas correspondientes.`
+                      );
+                    } else if (res.error) {
+                      setStatusError(res.error);
+                    }
+                  }}
+                  disabled={isSyncingFolder || isDriveSyncing}
+                  className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-emerald-950/60 transition cursor-pointer disabled:opacity-60 flex items-center gap-2"
                 >
-                  <RefreshCw className={`w-4 h-4 ${isSyncingFolder ? 'animate-spin' : ''}`} />
-                  <span>{isSyncingFolder ? 'Sincronizando...' : 'Sincronizar Toda la Carpeta Ahora'}</span>
+                  <RefreshCw className={`w-4 h-4 ${isSyncingFolder || isDriveSyncing ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isSyncingFolder || isDriveSyncing
+                      ? 'Actualizando desde Drive...'
+                      : 'Actualizar Sistema desde Drive'}
+                  </span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => handleSyncLinkedFolder(true)}
-                  disabled={isSyncingFolder}
-                  className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
-                  title="Vuelve a leer todos los archivos Excel de la carpeta aunque no hayan cambiado"
+                  onClick={() => handleSyncLinkedFolder(false)}
+                  disabled={isSyncingFolder || isDriveSyncing}
+                  className="px-3.5 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  title="Agrega solo las planillas nuevas o modificadas sin reemplazar registros previos"
                 >
                   <CheckCheck className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Re-sincronizar Todo</span>
+                  <span>Sumar Solo Novedades</span>
                 </button>
-
-                {!googleToken && renderGoogleSignInButton('Sign in with Google')}
               </div>
             </div>
 
             {/* Secondary Controls Row */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-800/80 text-xs">
-              <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={linkedFolder.autoSyncOnConnect}
-                  onChange={handleToggleAutoSync}
-                  className="rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500 cursor-pointer"
-                />
-                <span>Sincronizar automáticamente los archivos nuevos/modificados al conectar Google Drive</span>
-              </label>
+              <button
+                type="button"
+                onClick={() => setShowAdvancedConnection(prev => !prev)}
+                className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 hover:text-sky-300 cursor-pointer self-start"
+              >
+                <Code2 className="w-3.5 h-3.5 text-sky-400" />
+                <span>Opciones Avanzadas (Apps Script para Netlify / Cuenta Google Privada)</span>
+                {showAdvancedConnection ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
 
               <div className="flex items-center gap-2">
                 <button
@@ -1027,6 +1272,66 @@ export const DriveAndExcelSync: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Collapsible Advanced Connection Panel (Apps Script + Optional Private Google Sign-In) */}
+            {showAdvancedConnection && (
+              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 space-y-4 text-xs">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-bold text-sky-300 flex items-center gap-1.5">
+                      <Code2 className="w-4 h-4" />
+                      <span>Opción Alternativa: Conector Propio en Google Apps Script (Para Carpetas Privadas o Hosting Estático)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyAppsScript}
+                      className="px-2.5 py-1 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 rounded-lg text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>{copiedScript ? '¡Código Copiado!' : 'Copiar Código Apps Script'}</span>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Si algún día querés mantener tu carpeta en modo <strong>privado</strong> o publicar solo archivos estáticos sin servidor, creá un proyecto en{' '}
+                    <a
+                      href="https://script.google.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sky-400 underline"
+                    >
+                      script.google.com
+                    </a>{' '}
+                    desde tu cuenta <span className="font-mono text-slate-300">itaibatemodernizacion@gmail.com</span>, pegá el código copiado, hacé clic en <strong>Implementar → Aplicación web → Acceso: Cualquier persona</strong> y pegá aquí la URL resultante:
+                  </p>
+                  <form onSubmit={handleSaveAppsScriptUrl} className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="text"
+                      value={appsScriptInput}
+                      onChange={e => setAppsScriptInput(e.target.value)}
+                      placeholder="https://script.google.com/macros/s/.../exec (opcional)"
+                      className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
+                    />
+                    <button
+                      type="submit"
+                      className="px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold cursor-pointer shrink-0"
+                    >
+                      Guardar Conector
+                    </button>
+                  </form>
+                </div>
+
+                {!googleToken && (
+                  <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="text-[11px] text-slate-400">
+                      <strong className="text-slate-200">Solo para carpetas privadas:</strong> si no usás el enlace compartido, podés iniciar sesión con Google (si aparece el aviso de verificación de prueba, elegí <em>Configuración avanzada → Ir a la app</em>).
+                    </div>
+                    <div className="shrink-0">
+                      {renderGoogleSignInButton('Sign in with Google')}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Live Sync Progress */}
             {isSyncingFolder && syncProgressText && (
@@ -1582,32 +1887,54 @@ export const DriveAndExcelSync: React.FC = () => {
           <div className="space-y-3">
             <h3 className="font-bold text-white text-sm flex items-center gap-2">
               <Upload className="w-4 h-4 text-sky-400" />
-              3. Carga Directa desde Archivo Excel Local
+              3. Carga Directa desde PC (1 Archivo, Varios Excel o Carpeta Completa)
             </h3>
             <p className="text-xs text-slate-400">
-              Si posee el archivo en su computadora (.xlsx, .xls o .csv), cárguelo aquí para analizar sus hojas e incorporarlo a <strong className="text-slate-200">{selectedDept?.shortName}</strong>.
+              Si tenés las planillas en tu PC o sincronizadas con <strong>Google Drive para Escritorio</strong>, podés elegir un archivo, seleccionar varios Excel juntos o subir la carpeta completa de una sola vez.
             </p>
 
             <div
               onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-slate-700 hover:border-sky-500 bg-slate-950/60 rounded-2xl p-6 text-center cursor-pointer transition flex flex-col items-center justify-center space-y-2.5 group"
+              className="border-2 border-dashed border-slate-700 hover:border-sky-500 bg-slate-950/60 rounded-2xl p-5 text-center cursor-pointer transition flex flex-col items-center justify-center space-y-2.5 group"
             >
               <input
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileChange}
-                accept=".xlsx, .xls, .csv"
+                accept=".xlsx, .xls, .xlsm, .csv"
+                multiple
+                className="hidden"
+              />
+              <input
+                type="file"
+                ref={folderInputRef}
+                onChange={handleFileChange}
+                multiple
+                {...({ webkitdirectory: '', directory: '' } as any)}
                 className="hidden"
               />
               <div className="w-11 h-11 rounded-2xl bg-sky-500/10 group-hover:bg-sky-500/20 text-sky-400 flex items-center justify-center transition">
                 <Upload className="w-5 h-5" />
               </div>
               <p className="font-bold text-white text-xs">
-                Seleccionar Planilla Excel (.xlsx, .xls, .csv)
+                Seleccionar Uno o Varios Archivos Excel (.xlsx, .xls, .csv)
               </p>
-              <span className="text-[11px] px-3 py-1 rounded-full bg-slate-800 text-slate-300 font-medium border border-slate-700">
-                {isProcessing ? 'Analizando hojas...' : 'Examinar Archivo'}
-              </span>
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                <span className="text-[11px] px-3 py-1.5 rounded-full bg-sky-600/20 text-sky-300 font-semibold border border-sky-500/40">
+                  {isProcessing ? 'Analizando planillas...' : 'Elegir Archivos'}
+                </span>
+                <button
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    folderInputRef.current?.click();
+                  }}
+                  className="text-[11px] px-3 py-1.5 rounded-full bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 font-semibold border border-emerald-500/40 cursor-pointer flex items-center gap-1"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>Cargar Carpeta Completa</span>
+                </button>
+              </div>
             </div>
           </div>
 
