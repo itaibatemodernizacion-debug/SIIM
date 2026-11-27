@@ -2325,7 +2325,7 @@ export const MunicipalDataProvider: React.FC<{ children: React.ReactNode }> = ({
     if (hasAutoSyncedOnMountRef.current) return;
     hasAutoSyncedOnMountRef.current = true;
     const timer = window.setTimeout(() => {
-      syncFromOfficialDrive({ replaceExisting: true, silent: true }).catch(() => {});
+      syncFromOfficialDrive({ replaceExisting: true, silent: false }).catch(() => {});
     }, 450);
     return () => window.clearTimeout(timer);
   }, [syncFromOfficialDrive]);

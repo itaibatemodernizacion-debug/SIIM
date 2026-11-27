@@ -112,13 +112,13 @@ const ensureJsonResponse = async (res: Response, endpointLabel: string) => {
 
 const fetchPublicFolderJson = async (folderId: string) => {
   const primaryUrl = `/api/drive/public/folder/${encodeURIComponent(folderId)}`;
-  let res = await fetch(primaryUrl);
+  let res = await fetch(primaryUrl, { cache: 'no-store' });
   const ct = res.headers.get('content-type') || '';
 
   // Fallback directly to Netlify Function endpoint if SPA rewrite intercepted /api/*
   if (!ct.includes('application/json')) {
     const netlifyFallbackUrl = `/.netlify/functions/drive-public?action=folder&id=${encodeURIComponent(folderId)}`;
-    const fallbackRes = await fetch(netlifyFallbackUrl);
+    const fallbackRes = await fetch(netlifyFallbackUrl, { cache: 'no-store' });
     const fallbackCt = fallbackRes.headers.get('content-type') || '';
     if (fallbackCt.includes('application/json') || fallbackRes.ok) {
       res = fallbackRes;
@@ -135,7 +135,7 @@ const fetchPublicFolderJson = async (folderId: string) => {
 const fetchPublicDownloadBuffer = async (file: Pick<DriveFileItem, 'id' | 'name' | 'mimeType'>): Promise<ArrayBuffer> => {
   const params = new URLSearchParams({ mimeType: file.mimeType || '' });
   const primaryUrl = `/api/drive/public/download/${encodeURIComponent(file.id)}?${params.toString()}`;
-  let res = await fetch(primaryUrl);
+  let res = await fetch(primaryUrl, { cache: 'no-store' });
   const ct = res.headers.get('content-type') || '';
 
   if (ct.includes('text/html')) {
@@ -144,7 +144,9 @@ const fetchPublicDownloadBuffer = async (file: Pick<DriveFileItem, 'id' | 'name'
       id: file.id,
       mimeType: file.mimeType || ''
     });
-    const fallbackRes = await fetch(`/.netlify/functions/drive-public?${fallbackParams.toString()}`);
+    const fallbackRes = await fetch(`/.netlify/functions/drive-public?${fallbackParams.toString()}`, {
+      cache: 'no-store'
+    });
     const fallbackCt = fallbackRes.headers.get('content-type') || '';
     if (!fallbackCt.includes('text/html')) {
       res = fallbackRes;

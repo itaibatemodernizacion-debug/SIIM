@@ -8,6 +8,11 @@ const DRIVE_MIME_TYPES = {
   CSV: 'text/csv'
 };
 
+const JSON_HEADERS = {
+  'Content-Type': 'application/json; charset=utf-8',
+  'Cache-Control': 'no-store'
+};
+
 const decodeHtmlEntities = (str) =>
   str
     .replace(/&amp;/g, '&')
@@ -59,27 +64,35 @@ const parseEmbeddedFolderHtml = (html) => {
   return { folderName, files };
 };
 
-export async function handler(event) {
-  const rawPath = event.path || '';
-  const qs = event.queryStringParameters || {};
+export default async function handler(req) {
+  const url = new URL(req.url);
+  const pathname = url.pathname || '';
+  const searchParams = url.searchParams;
 
-  const folderPathMatch = rawPath.match(/\/folder\/([^/?#]+)/);
-  const downloadPathMatch = rawPath.match(/\/download\/([^/?#]+)/);
+  if (pathname.endsWith('/health') || searchParams.get('action') === 'health') {
+    return new Response(
+      JSON.stringify({ ok: true, runtime: 'netlify-functions-v2' }),
+      { status: 200, headers: JSON_HEADERS }
+    );
+  }
 
-  const isFolderAction = Boolean(folderPathMatch) || qs.action === 'folder';
-  const isDownloadAction = Boolean(downloadPathMatch) || qs.action === 'download';
+  const folderPathMatch = pathname.match(/\/folder\/([^/?#]+)/);
+  const downloadPathMatch = pathname.match(/\/download\/([^/?#]+)/);
+
+  const action = searchParams.get('action') || '';
+  const isFolderAction = Boolean(folderPathMatch) || action === 'folder';
+  const isDownloadAction = Boolean(downloadPathMatch) || action === 'download';
 
   if (isFolderAction) {
     const folderId = decodeURIComponent(
-      (folderPathMatch ? folderPathMatch[1] : qs.id || '')
+      (folderPathMatch ? folderPathMatch[1] : searchParams.get('id') || '')
     ).trim();
 
     if (!DRIVE_ID_REGEX.test(folderId)) {
-      return {
-        statusCode: 400,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: 'ID de carpeta de Google Drive inválido.' })
-      };
+      return new Response(
+        JSON.stringify({ error: 'ID de carpeta de Google Drive inválido.' }),
+        { status: 400, headers: JSON_HEADERS }
+      );
     }
 
     try {
@@ -96,49 +109,45 @@ export async function handler(event) {
         html.includes('accounts.google.com/ServiceLogin') ||
         (!html.includes('flip-entries') && !html.includes('flip-embedded'))
       ) {
-        return {
-          statusCode: 403,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        return new Response(
+          JSON.stringify({
             error:
               'PUBLIC_ACCESS_DENIED: Verifique que la carpeta esté compartida como "Cualquier persona con el enlace: Lector".'
-          })
-        };
+          }),
+          { status: 403, headers: JSON_HEADERS }
+        );
       }
 
       const parsed = parseEmbeddedFolderHtml(html);
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-        body: JSON.stringify({
+      return new Response(
+        JSON.stringify({
           folderId,
           folderName: parsed.folderName,
           files: parsed.files
-        })
-      };
+        }),
+        { status: 200, headers: JSON_HEADERS }
+      );
     } catch (err) {
-      return {
-        statusCode: 502,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: err?.message || 'Error al consultar Google Drive.' })
-      };
+      return new Response(
+        JSON.stringify({ error: err?.message || 'Error al consultar Google Drive.' }),
+        { status: 502, headers: JSON_HEADERS }
+      );
     }
   }
 
   if (isDownloadAction) {
     const fileId = decodeURIComponent(
-      (downloadPathMatch ? downloadPathMatch[1] : qs.id || '')
+      (downloadPathMatch ? downloadPathMatch[1] : searchParams.get('id') || '')
     ).trim();
 
     if (!DRIVE_ID_REGEX.test(fileId)) {
-      return {
-        statusCode: 400,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: 'ID de archivo de Google Drive inválido.' })
-      };
+      return new Response(
+        JSON.stringify({ error: 'ID de archivo de Google Drive inválido.' }),
+        { status: 400, headers: JSON_HEADERS }
+      );
     }
 
-    const mimeType = String(qs.mimeType || '').trim();
+    const mimeType = String(searchParams.get('mimeType') || '').trim();
     const isGoogleSheet = mimeType === DRIVE_MIME_TYPES.GOOGLE_SHEET;
 
     try {
@@ -153,38 +162,37 @@ export async function handler(event) {
       const contentType = upstream.headers.get('content-type') || '';
 
       if (!upstream.ok || contentType.includes('text/html')) {
-        return {
-          statusCode: 403,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        return new Response(
+          JSON.stringify({
             error:
               'PUBLIC_ACCESS_DENIED: No se pudo descargar el archivo desde el enlace compartido.'
-          })
-        };
+          }),
+          { status: 403, headers: JSON_HEADERS }
+        );
       }
 
-      const buf = Buffer.from(await upstream.arrayBuffer());
-      return {
-        statusCode: 200,
-        isBase64Encoded: true,
+      const arrayBuffer = await upstream.arrayBuffer();
+      return new Response(arrayBuffer, {
+        status: 200,
         headers: {
           'Content-Type': 'application/octet-stream',
           'Cache-Control': 'no-store'
-        },
-        body: buf.toString('base64')
-      };
+        }
+      });
     } catch (err) {
-      return {
-        statusCode: 502,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: err?.message || 'Error al descargar archivo de Drive.' })
-      };
+      return new Response(
+        JSON.stringify({ error: err?.message || 'Error al descargar archivo de Drive.' }),
+        { status: 502, headers: JSON_HEADERS }
+      );
     }
   }
 
-  return {
-    statusCode: 404,
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ error: 'Ruta de Google Drive no encontrada.' })
-  };
+  return new Response(
+    JSON.stringify({ error: 'Ruta de Google Drive no encontrada.' }),
+    { status: 404, headers: JSON_HEADERS }
+  );
 }
+
+export const config = {
+  path: '/api/drive/public/*'
+};
